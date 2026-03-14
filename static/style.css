@@ -15,6 +15,7 @@ header {
 
 header h1 { color: #fff; font-size: 1.8rem; }
 header p { color: #ccc; margin-top: 0.3rem; font-size: 0.9rem; }
+header .version { display: inline-block; margin-top: 0.4rem; font-size: 0.75rem; color: #0e1117; background: #00ff87; padding: 1px 8px; border-radius: 10px; font-weight: 700; }
 
 .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
 
@@ -439,6 +440,7 @@ header p { color: #ccc; margin-top: 0.3rem; font-size: 0.9rem; }
 
 .player-card .player-team { font-size: 0.7rem; color: #8b949e; }
 .player-card .player-pts { font-size: 1.1rem; font-weight: 700; color: #00ff87; margin: 0.3rem 0; }
+.pts-label { font-size: 0.55rem; color: #8b949e; margin-left: 2px; font-weight: 400; vertical-align: super; }
 .player-card .player-cost { font-size: 0.7rem; color: #8b949e; }
 
 .player-card .start-likelihood {

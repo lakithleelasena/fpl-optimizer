@@ -12,6 +12,8 @@ from config import (
     FIXTURES_URL,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
+    STRENGTH_MAX,
+    STRENGTH_MIN,
 )
 
 _cache: dict = {}
@@ -102,13 +104,25 @@ async def fetch_all_data() -> dict:
             for t in bootstrap["teams"]
         }
 
-        # Next GW fixtures: map team_id -> list of opponent team_ids
-        next_fixtures: dict[int, list[int]] = {}
+        # Collect fixtures for next 3 gameweeks
+        sorted_events = sorted(bootstrap["events"], key=lambda e: e["id"])
+        upcoming_gws: list[int] = []
+        for event in sorted_events:
+            if event["id"] >= next_gw and not event.get("finished", False):
+                upcoming_gws.append(event["id"])
+            if len(upcoming_gws) == 3:
+                break
+
+        # Per-GW fixture map: {gw_id: {team_id: [opp_ids]}}
+        gw_fixture_map: dict[int, dict[int, list[int]]] = {gw: {} for gw in upcoming_gws}
         for fix in fixtures:
-            if fix["event"] == next_gw:
+            if fix["event"] in gw_fixture_map:
                 h, a = fix["team_h"], fix["team_a"]
-                next_fixtures.setdefault(h, []).append(a)
-                next_fixtures.setdefault(a, []).append(h)
+                gw_fixture_map[fix["event"]].setdefault(h, []).append(a)
+                gw_fixture_map[fix["event"]].setdefault(a, []).append(h)
+
+        str_range = STRENGTH_MAX - STRENGTH_MIN
+        mid_str = (STRENGTH_MAX + STRENGTH_MIN) / 2
 
         # Filter active players (minutes > 0)
         elements = bootstrap["elements"]
@@ -146,7 +160,23 @@ async def fetch_all_data() -> dict:
 
             pos = POSITION_MAP.get(p["element_type"], "UNK")
             team_id = p["team"]
-            opponents = next_fixtures.get(team_id, [])
+
+            # Build per-GW fixture and ease data across next 3 GWs
+            gw_fixtures: dict[int, list[int]] = {}
+            gw_ease: dict[int, float | None] = {}
+            for gw_id in upcoming_gws:
+                opps = gw_fixture_map[gw_id].get(team_id, [])
+                gw_fixtures[gw_id] = opps
+                if opps:
+                    avg_str = sum(team_strengths.get(o, mid_str) for o in opps) / len(opps)
+                    gw_ease[gw_id] = round(max(0.0, min(1.0, (STRENGTH_MAX - avg_str) / str_range)), 2)
+                else:
+                    gw_ease[gw_id] = None  # blank GW
+
+            # Flatten all opponents and strengths across 3 GWs
+            all_opponents = [o for opps in gw_fixtures.values() for o in opps]
+            all_opp_strengths = [team_strengths[o] for o in all_opponents if o in team_strengths]
+            n_fixtures = len(all_opponents)
 
             players.append({
                 "id": pid,
@@ -158,14 +188,18 @@ async def fetch_all_data() -> dict:
                 "chance_of_playing": p.get("chance_of_playing_next_round"),
                 "minutes": p["minutes"],
                 "total_points": p["total_points"],
-                "opponents": opponents,
-                "opponent_strengths": [team_strengths[opp] for opp in opponents if opp in team_strengths],
+                "opponents": all_opponents,
+                "opponent_strengths": all_opp_strengths,
+                "n_fixtures": n_fixtures,
+                "gw_fixtures": gw_fixtures,
+                "gw_ease": gw_ease,
                 "stats": stats,
             })
 
         data = {
             "players": players,
             "next_gw": next_gw,
+            "upcoming_gws": upcoming_gws,
             "teams": teams,
             "team_strengths": team_strengths,
             "raw_histories": raw_histories,

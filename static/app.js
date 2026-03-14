@@ -395,7 +395,7 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false) {
             ${badge}
             <div class="player-name">${p.name}</div>
             <div class="player-team">${p.team} · ${p.position}</div>
-            <div class="player-pts">${p.predicted_points.toFixed(1)}</div>
+            <div class="player-pts">${p.predicted_points.toFixed(1)}<span class="pts-label">3GW</span></div>
             <div class="player-cost">£${p.cost.toFixed(1)}m</div>
             <div class="start-likelihood" style="color:${slColor}">${slPct}% start</div>
             <div class="breakdown">

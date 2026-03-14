@@ -34,6 +34,8 @@ async def index(request: Request):
 
 
 def _build_player_out(player: dict, prediction: dict) -> dict:
+    # Scale per-match prediction by total fixtures across next 3 GWs
+    n_fix = max(1, player.get("n_fixtures", 1))
     return {
         "id": player["id"],
         "name": player["name"],
@@ -41,7 +43,7 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "team_id": player["team_id"],
         "position": player["position"],
         "cost": player["cost"] / 10,
-        "predicted_points": prediction["predicted_points"],
+        "predicted_points": round(prediction["predicted_points"] * n_fix, 2),
         "opponent_score": prediction["opponent_score"],
         "season_avg": prediction["season_avg"],
         "momentum": prediction["momentum"],
@@ -50,6 +52,10 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "chance_of_playing": player.get("chance_of_playing"),
         "minutes": player["minutes"],
         "total_points": player["total_points"],
+        # Internal fields for chip timing (not in Pydantic model, stripped later)
+        "gw_ease": player.get("gw_ease", {}),
+        "gw_fixtures": player.get("gw_fixtures", {}),
+        "n_fixtures": n_fix,
     }
 
 
@@ -168,6 +174,7 @@ async def get_transfer_advice(req: TransferRequest):
         free_transfers=req.free_transfers,
         budget_in_bank=req.budget_in_bank,
         chips_available=req.chips_available,
+        upcoming_gws=data["upcoming_gws"],
     )
 
     # Convert to response models (cost → display format)
