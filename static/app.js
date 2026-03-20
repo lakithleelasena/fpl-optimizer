@@ -102,18 +102,26 @@ async function runOptimize() {
     };
 
     try {
-        const [optResp, playersResp] = await Promise.all([
-            fetch("/api/optimize", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            }),
-            fetch(`/api/players?w_opponent=${body.w_opponent}&w_season=${body.w_season}&w_momentum=${body.w_momentum}&w_fixture=${body.w_fixture}`),
-        ]);
-        const data = await optResp.json();
-        allPlayers = await playersResp.json();
+        const resp = await fetch("/api/optimize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || "Server error");
+        }
+        const data = await resp.json();
         renderSquad(data);
-        renderTable();
+
+        // Refresh player table with the same weights so scores match pitch cards
+        const playersResp = await fetch(
+            `/api/players?w_opponent=${body.w_opponent}&w_season=${body.w_season}&w_momentum=${body.w_momentum}&w_fixture=${body.w_fixture}`
+        );
+        if (playersResp.ok) {
+            allPlayers = await playersResp.json();
+            renderTable();
+        }
     } catch (e) {
         $("#pitch-starters").innerHTML = `<div class="loading">Optimization failed: ${e.message}</div>`;
     } finally {
