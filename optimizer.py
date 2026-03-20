@@ -117,6 +117,66 @@ def recommend_transfers(
     if len(current_team) != 15:
         raise ValueError(f"Expected 15 players in squad, got {len(current_team)}")
 
+    # ── Free Hit: LP-optimise with GW1-only predictions ──────────────────────
+    # When Free Hit is available use the same LP solver as Tab 1 so both tabs
+    # show the identical optimal squad.  Total budget = sell value of current
+    # squad + money in bank (mirrors how FPL calculates the Free Hit budget).
+    if "free_hit" in chips_available and upcoming_gws:
+        gw1 = upcoming_gws[0]
+        total_budget = sum(p["cost"] for p in current_team) + budget_in_bank
+
+        # Score every player on GW1 only (same as Tab 1 logic)
+        fh_players = [{**p, "predicted_points": _gw_player_pts(p, gw1)} for p in all_players]
+
+        fh_result = optimize_squad(fh_players, budget=total_budget)
+        fh_squad = fh_result["starters"] + fh_result["bench"]
+
+        # Build transfer list by diffing current squad vs LP squad (paired by position)
+        current_id_set = {p["id"] for p in current_team}
+        fh_id_set = {p["id"] for p in fh_squad}
+        id_to_current = {p["id"]: p for p in current_team}
+
+        transfers = []
+        for pos in ("GKP", "DEF", "MID", "FWD"):
+            going_out = sorted(
+                [id_to_current[pid] for pid in (current_id_set - fh_id_set) if id_to_current.get(pid, {}).get("position") == pos],
+                key=lambda p: _gw_player_pts(p, gw1),
+            )
+            coming_in = sorted(
+                [p for p in fh_squad if p["id"] in (fh_id_set - current_id_set) and p["position"] == pos],
+                key=lambda p: _gw_player_pts(p, gw1), reverse=True,
+            )
+            for out_p, in_p in zip(going_out, coming_in):
+                transfers.append({
+                    "transfer_out": out_p,
+                    "transfer_in": in_p,
+                    "points_gain": round(_gw_player_pts(in_p, gw1) - _gw_player_pts(out_p, gw1), 2),
+                    "is_hit": False,
+                })
+
+        starters_sorted = sorted(fh_result["starters"], key=lambda p: p["predicted_points"], reverse=True)
+        captain = starters_sorted[0] if starters_sorted else None
+        vice_captain = starters_sorted[1] if len(starters_sorted) > 1 else None
+
+        starter_gw1 = _gw_squad_pts(fh_result["starters"], gw1)
+        chip_rec = {
+            "chip": "free_hit",
+            "reason": (
+                f"Free Hit squad optimised for GW{gw1} — your starters are predicted "
+                f"{starter_gw1:.0f} pts this gameweek using the globally optimal 15."
+            ),
+        }
+
+        return {
+            "current_xi": fh_result,
+            "transfers": transfers,
+            "chip_recommendation": chip_rec,
+            "hits_required": 0,
+            "net_points_gain": round(sum(t["points_gain"] for t in transfers), 2),
+            "captain": captain,
+            "vice_captain": vice_captain,
+        }
+
     current_ids = set(p["id"] for p in current_team)
 
     # Per-team player counts
