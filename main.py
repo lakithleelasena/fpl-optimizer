@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Changes every restart/deploy — forces browser to fetch fresh static files
+_BUILD_TS = int(time.time())
 
 from fpl_client import fetch_all_data
 from models import (
@@ -31,7 +35,11 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    resp = templates.TemplateResponse(
+        "index.html", {"request": request, "cache_bust": _BUILD_TS}
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
