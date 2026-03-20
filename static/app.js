@@ -55,8 +55,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    loadSavedSquad();
     loadPlayers();
+    loadNextGw();
 });
+
+async function loadNextGw() {
+    try {
+        const resp = await fetch("/api/next-gw");
+        const data = await resp.json();
+        $("#next-gw-badge").textContent = `Next Gameweek: GW${data.next_gw}`;
+    } catch (e) {
+        $("#next-gw-badge").textContent = "";
+    }
+}
 
 // ─── Players ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +146,25 @@ function isInSquad(playerId) {
     return Object.values(mySquad).some((arr) => arr.some((p) => p.id === playerId));
 }
 
+function saveSquad() {
+    localStorage.setItem("fpl_my_squad", JSON.stringify(mySquad));
+}
+
+function loadSavedSquad() {
+    try {
+        const saved = localStorage.getItem("fpl_my_squad");
+        if (saved) mySquad = JSON.parse(saved);
+    } catch (e) {
+        // ignore corrupt data
+    }
+}
+
+function clearSavedSquad() {
+    localStorage.removeItem("fpl_my_squad");
+    mySquad = { GKP: [], DEF: [], MID: [], FWD: [] };
+    renderSquadBuilder();
+}
+
 function addPlayerToSquad(player) {
     const pos = player.position;
     if (mySquad[pos].length >= slotLimits[pos]) {
@@ -145,6 +176,7 @@ function addPlayerToSquad(player) {
         return;
     }
     mySquad[pos].push(player);
+    saveSquad();
     renderSquadBuilder();
     $("#squad-search").value = "";
     $("#squad-search-results").innerHTML = "";
@@ -154,6 +186,7 @@ function removePlayerFromSquad(playerId) {
     for (const pos of Object.keys(mySquad)) {
         mySquad[pos] = mySquad[pos].filter((p) => p.id !== playerId);
     }
+    saveSquad();
     renderSquadBuilder();
 }
 
@@ -269,6 +302,8 @@ function renderTransferAdvice(data) {
     gainEl.textContent = `+${data.net_points_gain.toFixed(1)}`;
     gainEl.style.color = data.net_points_gain >= 0 ? "#00ff87" : "#ff6b6b";
 
+    $("#ts-total-3gw").textContent = data.total_predicted_3gw.toFixed(1);
+
     // Chip recommendation
     renderChipRec(data.chip_recommendation);
 
@@ -327,13 +362,13 @@ function renderTransfers(transfers, freeTransfers) {
                     <div class="transfer-out">
                         <div class="t-label">OUT</div>
                         <div class="t-name">${t.transfer_out.name}</div>
-                        <div class="t-meta">${t.transfer_out.team} · £${t.transfer_out.cost.toFixed(1)}m · ${t.transfer_out.predicted_points.toFixed(1)}pts</div>
+                        <div class="t-meta">${t.transfer_out.team} · £${t.transfer_out.cost.toFixed(1)}m · ${t.transfer_out.predicted_points.toFixed(1)} 3GW pts</div>
                     </div>
                     <div class="transfer-arrow">→</div>
                     <div class="transfer-in">
                         <div class="t-label">IN</div>
                         <div class="t-name">${t.transfer_in.name}</div>
-                        <div class="t-meta">${t.transfer_in.team} · £${t.transfer_in.cost.toFixed(1)}m · ${t.transfer_in.predicted_points.toFixed(1)}pts</div>
+                        <div class="t-meta">${t.transfer_in.team} · £${t.transfer_in.cost.toFixed(1)}m · ${t.transfer_in.predicted_points.toFixed(1)} 3GW pts</div>
                     </div>
                     <div class="transfer-gain">
                         <div class="t-gain-val">+${t.points_gain.toFixed(1)}</div>
@@ -354,11 +389,11 @@ function renderAdvicePitch(data) {
     for (const [pos, players] of Object.entries(groups)) {
         if (players.length === 0) continue;
         html += `<div class="position-row"><div class="position-row-label">${pos}</div>`;
-        html += players.map((p) => cardHTML(p, p.id === data.captain_id, p.id === data.vice_captain_id)).join("");
+        html += players.map((p) => cardHTML(p, p.id === data.captain_id, p.id === data.vice_captain_id, false)).join("");
         html += `</div>`;
     }
     $("#advice-pitch-starters").innerHTML = html;
-    $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false)).join("");
+    $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false)).join("");
 }
 
 // ─── Shared rendering helpers ─────────────────────────────────────────────────
@@ -382,7 +417,7 @@ function fixtureLabel(ease) {
     return "Hard";
 }
 
-function cardHTML(p, isCaptain = false, isViceCaptain = false) {
+function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false) {
     const slPct = Math.round(p.start_likelihood * 100);
     const slColor = startColor(p.start_likelihood);
     const badge = isCaptain
@@ -390,12 +425,20 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false) {
         : isViceCaptain
         ? `<div class="captain-badge vc-badge">V</div>`
         : "";
+    const displayPts = (!show3gw && p.gw_pts && p.gw_pts.length > 0)
+        ? p.gw_pts[0]
+        : p.predicted_points;
+    const ptsLabel = show3gw ? "3GW" : "GW";
+    const gwBreakdown = show3gw && p.gw_pts && p.gw_pts.length === 3
+        ? `<div class="gw-breakdown">GW1:${p.gw_pts[0].toFixed(1)} GW2:${p.gw_pts[1].toFixed(1)} GW3:${p.gw_pts[2].toFixed(1)}</div>`
+        : "";
     return `
         <div class="player-card pos-${p.position}" style="position:relative">
             ${badge}
             <div class="player-name">${p.name}</div>
             <div class="player-team">${p.team} · ${p.position}</div>
-            <div class="player-pts">${p.predicted_points.toFixed(1)}<span class="pts-label">3GW</span></div>
+            <div class="player-pts">${displayPts.toFixed(1)}<span class="pts-label">${ptsLabel}</span></div>
+            ${gwBreakdown}
             <div class="player-cost">£${p.cost.toFixed(1)}m</div>
             <div class="start-likelihood" style="color:${slColor}">${slPct}% start</div>
             <div class="breakdown">

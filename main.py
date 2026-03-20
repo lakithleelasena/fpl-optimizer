@@ -33,9 +33,36 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
+    """Return a copy of player with opponents/strengths/n_fixtures restricted to GW1 only."""
+    gw1 = upcoming_gws[0] if upcoming_gws else None
+    if gw1 is None:
+        return player
+    gw1_opps = player["gw_fixtures"].get(gw1, [])
+    gw1_strengths = [team_strengths.get(o, 0) for o in gw1_opps]
+    return {**player, "opponents": gw1_opps, "opponent_strengths": gw1_strengths, "n_fixtures": len(gw1_opps)}
+
+
+def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
+    """Compute per-GW predicted points using season_avg and fixture ease."""
+    result = []
+    for gw_id in upcoming_gws:
+        ease = out.get("gw_ease", {}).get(gw_id)
+        if ease is None:
+            result.append(0.0)
+            continue
+        n_fix = len(out.get("gw_fixtures", {}).get(gw_id, []))
+        if n_fix == 0:
+            result.append(0.0)
+            continue
+        per_match = out.get("season_avg", 0.0) * (0.5 + ease) * out.get("start_likelihood", 0.8)
+        result.append(round(per_match * n_fix, 2))
+    return result
+
+
 def _build_player_out(player: dict, prediction: dict) -> dict:
-    # Scale per-match prediction by total fixtures across next 3 GWs
-    n_fix = max(1, player.get("n_fixtures", 1))
+    # Scale per-match prediction by number of fixtures; 0 fixtures → 0 predicted points
+    n_fix = player.get("n_fixtures", 0)
     return {
         "id": player["id"],
         "name": player["name"],
@@ -77,6 +104,7 @@ def _to_player_out(p: dict) -> PlayerOut:
         chance_of_playing=p.get("chance_of_playing"),
         minutes=p["minutes"],
         total_points=p["total_points"],
+        gw_pts=p.get("gw_pts"),
     )
 
 
@@ -97,8 +125,15 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         chance_of_playing=p.get("chance_of_playing"),
         minutes=p["minutes"],
         total_points=p["total_points"],
+        gw_pts=p.get("gw_pts"),
         is_starter=is_starter,
     )
+
+
+@app.get("/api/next-gw")
+async def get_next_gw():
+    data = await fetch_all_data()
+    return {"next_gw": data["next_gw"], "upcoming_gws": data["upcoming_gws"]}
 
 
 @app.get("/api/players", response_model=List[PlayerOut])
@@ -106,8 +141,9 @@ async def get_players():
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
-        pred = predict_points(p)
-        result.append(_build_player_out(p, pred))
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        pred = predict_points(p_gw1)
+        result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
 
@@ -118,8 +154,9 @@ async def run_optimize(req: OptimizeRequest):
 
     enriched = []
     for p in data["players"]:
-        pred = predict_points(p, req.w_opponent, req.w_season, req.w_momentum, req.w_fixture)
-        out = _build_player_out(p, pred)
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        pred = predict_points(p_gw1, req.w_opponent, req.w_season, req.w_momentum, req.w_fixture)
+        out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
         enriched.append(out)
 
@@ -160,12 +197,13 @@ async def get_transfer_advice(req: TransferRequest):
 
     data = await fetch_all_data()
 
-    # Build enriched players with raw cost for optimizer
+    # Build enriched players with raw cost for optimizer (3GW predictions for transfer/chip logic)
     enriched = []
     for p in data["players"]:
         pred = predict_points(p, req.w_opponent, req.w_season, req.w_momentum, req.w_fixture)
         out = _build_player_out(p, pred)
         out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
+        out["gw_pts"] = _player_gw_pts(out, data["upcoming_gws"])
         enriched.append(out)
 
     result = recommend_transfers(
@@ -193,6 +231,10 @@ async def get_transfer_advice(req: TransferRequest):
     captain_id = result["captain"]["id"] if result["captain"] else None
     vice_captain_id = result["vice_captain"]["id"] if result["vice_captain"] else None
 
+    total_predicted_3gw = round(
+        sum(p["predicted_points"] for p in result["current_xi"]["starters"]), 2
+    )
+
     return TransferAdviceResponse(
         starters=starters,
         bench=bench,
@@ -202,6 +244,7 @@ async def get_transfer_advice(req: TransferRequest):
         net_points_gain=result["net_points_gain"],
         captain_id=captain_id,
         vice_captain_id=vice_captain_id,
+        total_predicted_3gw=total_predicted_3gw,
     )
 
 

@@ -238,6 +238,18 @@ def _gw_squad_pts(squad: list[dict], gw_id: int) -> float:
     return round(total, 2)
 
 
+def _gw_player_pts(player: dict, gw_id: int) -> float:
+    """Predicted points for a single player in a specific GW."""
+    ease = player.get("gw_ease", {}).get(gw_id)
+    if ease is None:
+        return 0.0
+    n_fix = len(player.get("gw_fixtures", {}).get(gw_id, []))
+    if n_fix == 0:
+        return 0.0
+    per_match = player.get("season_avg", 0.0) * (0.5 + ease) * player.get("start_likelihood", 0.8)
+    return per_match * n_fix
+
+
 def _recommend_chip(
     current_team: list[dict],
     xi_result: dict,
@@ -268,14 +280,14 @@ def _recommend_chip(
     # ── Per-GW captain value ─────────────────────────────────────────────────
     starters_sorted = sorted(starters, key=lambda p: p["predicted_points"], reverse=True)
     top = starters_sorted[0] if starters_sorted else None
-    cap_gw1 = _gw_squad_pts([top], gw1) if (top and gw1) else 0
-    cap_gw2 = _gw_squad_pts([top], gw2) if (top and gw2) else 0
-    cap_gw3 = _gw_squad_pts([top], gw3) if (top and gw3) else 0
+    cap_gw1 = _gw_player_pts(top, gw1) if (top and gw1) else 0
+    cap_gw2 = _gw_player_pts(top, gw2) if (top and gw2) else 0
+    cap_gw3 = _gw_player_pts(top, gw3) if (top and gw3) else 0
+
+    n_beneficial = len(transfers)
 
     # ── Wildcard ─────────────────────────────────────────────────────────────
-    # Recommend if squad needs 5+ transfers. Wildcard is not GW-timing sensitive
-    # (it rebuilds the squad, not dependent on a specific GW being good).
-    n_beneficial = len(transfers)
+    # Always check first — overhaul need trumps timing of other chips.
     if "wildcard" in chips_available and n_beneficial >= 5:
         return {
             "chip": "wildcard",
@@ -285,88 +297,91 @@ def _recommend_chip(
             ),
         }
 
+    # ── Evaluate all remaining chips independently (no early returns on "hold") ──
+    # Each chip produces either a positive recommendation or a hold note.
+    # At the end the highest-priority positive recommendation wins.
+
+    chip_use: dict[str, str] = {}   # chip -> reason to USE it
+    chip_hold: dict[str, str] = {}  # chip -> reason to HOLD it
+
     # ── Bench Boost ──────────────────────────────────────────────────────────
-    # Only recommend if GW1 bench total is the highest of the 3 upcoming GWs.
-    if "bench_boost" in chips_available and bench_gw1 >= 12:
-        gw1_is_best_bench = bench_gw1 >= bench_gw2 and bench_gw1 >= bench_gw3
-        if gw1_is_best_bench:
-            return {
-                "chip": "bench_boost",
-                "reason": (
-                    f"Your bench is predicted {bench_gw1:.1f} pts this GW — the strongest it will be "
-                    f"over the next 3 gameweeks (GW2: {bench_gw2:.1f}, GW3: {bench_gw3:.1f}). "
-                    "This is the optimal week to activate Bench Boost."
-                ),
-            }
+    if "bench_boost" in chips_available:
+        if bench_gw1 >= 10 and bench_gw1 >= bench_gw2 and bench_gw1 >= bench_gw3:
+            chip_use["bench_boost"] = (
+                f"Your bench is predicted {bench_gw1:.1f} pts this GW — the strongest over the next "
+                f"3 gameweeks (GW2: {bench_gw2:.1f}, GW3: {bench_gw3:.1f}). "
+                "This is the optimal week to activate Bench Boost."
+            )
         else:
             best_gw = "GW2" if bench_gw2 >= bench_gw3 else "GW3"
             best_val = max(bench_gw2, bench_gw3)
-            return {
-                "chip": None,
-                "reason": (
-                    f"Your bench scores {bench_gw1:.1f} pts this GW but is stronger in {best_gw} "
-                    f"({best_val:.1f} pts). Hold Bench Boost for {best_gw}."
-                ),
-            }
+            chip_hold["bench_boost"] = (
+                f"Bench Boost: your bench scores {bench_gw1:.1f} pts this GW "
+                f"but is stronger in {best_gw} ({best_val:.1f} pts) — hold."
+            )
 
     # ── Triple Captain ───────────────────────────────────────────────────────
-    # Only recommend if GW1 is the best GW for the captain candidate.
     if "triple_captain" in chips_available and top:
-        avg_starter = sum(p["predicted_points"] for p in starters) / len(starters) if starters else 0
-        # predicted_points is already 3GW total; per-GW avg = /3
-        top_gw1_per_match = cap_gw1
-        if top_gw1_per_match >= 7 and cap_gw1 >= cap_gw2 and cap_gw1 >= cap_gw3:
-            return {
-                "chip": "triple_captain",
-                "reason": (
-                    f"{top['name']} has his best fixture of the next 3 GWs this week "
-                    f"(GW1: {cap_gw1:.1f}, GW2: {cap_gw2:.1f}, GW3: {cap_gw3:.1f} pts). "
-                    "Triple Captain now to maximise the return."
-                ),
-            }
-        elif top and (cap_gw2 > cap_gw1 or cap_gw3 > cap_gw1):
+        if cap_gw1 >= 6 and cap_gw1 >= cap_gw2 and cap_gw1 >= cap_gw3:
+            chip_use["triple_captain"] = (
+                f"{top['name']} has his best fixture of the next 3 GWs this week "
+                f"(GW1: {cap_gw1:.1f}, GW2: {cap_gw2:.1f}, GW3: {cap_gw3:.1f} pts). "
+                "Triple Captain now to maximise the return."
+            )
+        else:
             best_gw = "GW2" if cap_gw2 >= cap_gw3 else "GW3"
-            return {
-                "chip": None,
-                "reason": (
-                    f"{top['name']} has a better fixture in {best_gw} — hold Triple Captain for then."
-                ),
-            }
+            chip_hold["triple_captain"] = (
+                f"Triple Captain: {top['name']} has a better fixture in {best_gw} "
+                f"({max(cap_gw2, cap_gw3):.1f} vs {cap_gw1:.1f} pts this GW) — hold."
+            )
 
     # ── Free Hit ─────────────────────────────────────────────────────────────
-    # Only recommend if GW1 is the worst GW for the current team (most to gain from a free squad).
-    if "free_hit" in chips_available:
-        top15_gw1 = sum(
-            p["predicted_points"]
-            for p in sorted(all_players, key=lambda x: x["predicted_points"], reverse=True)[:15]
-        )
-        deficit_gw1 = top15_gw1 - starter_gw1
-        deficit_gw2 = _gw_squad_pts(
-            sorted(all_players, key=lambda x: x["predicted_points"], reverse=True)[:15], gw2
-        ) - starter_gw2 if gw2 else 0
-        deficit_gw3 = _gw_squad_pts(
-            sorted(all_players, key=lambda x: x["predicted_points"], reverse=True)[:15], gw3
-        ) - starter_gw3 if gw3 else 0
+    # Recommend if this GW has the largest gap between current starters and the
+    # optimal free-pick 15. Uses per-GW scoring so blanks are correctly penalised.
+    if "free_hit" in chips_available and gw1:
+        # Sort all players by their GW1 expected pts and take the best 15
+        players_by_gw1 = sorted(all_players, key=lambda p: _gw_player_pts(p, gw1), reverse=True)
+        top15_gw1 = sum(_gw_player_pts(p, gw1) for p in players_by_gw1[:15])
 
-        if deficit_gw1 > 0 and deficit_gw1 >= deficit_gw2 and deficit_gw1 >= deficit_gw3 and starter_gw1 < top15_gw1 * 0.72:
-            return {
-                "chip": "free_hit",
-                "reason": (
-                    f"This is your worst GW over the next 3 weeks — your starters are predicted "
-                    f"{starter_gw1:.0f} pts vs a possible {top15_gw1:.0f} pts. Free Hit lets you "
-                    "field the ideal team this week with no long-term impact."
-                ),
-            }
-        elif "free_hit" in chips_available and deficit_gw2 > deficit_gw1:
-            return {
-                "chip": None,
-                "reason": "Your squad has a tougher week ahead — consider saving Free Hit for GW2 or GW3 when fixtures worsen.",
-            }
+        players_by_gw2 = sorted(all_players, key=lambda p: _gw_player_pts(p, gw2), reverse=True) if gw2 else []
+        top15_gw2 = sum(_gw_player_pts(p, gw2) for p in players_by_gw2[:15]) if gw2 else 0
+
+        players_by_gw3 = sorted(all_players, key=lambda p: _gw_player_pts(p, gw3), reverse=True) if gw3 else []
+        top15_gw3 = sum(_gw_player_pts(p, gw3) for p in players_by_gw3[:15]) if gw3 else 0
+
+        deficit_gw1 = top15_gw1 - starter_gw1
+        deficit_gw2 = top15_gw2 - starter_gw2
+        deficit_gw3 = top15_gw3 - starter_gw3
+
+        if deficit_gw1 > 0 and deficit_gw1 >= deficit_gw2 and deficit_gw1 >= deficit_gw3 and (top15_gw1 == 0 or starter_gw1 < top15_gw1 * 0.80):
+            chip_use["free_hit"] = (
+                f"Your starters are predicted just {starter_gw1:.0f} pts this GW vs a possible "
+                f"{top15_gw1:.0f} pts with an optimal Free Hit squad "
+                f"(gap: {deficit_gw1:.0f} pts). This is your weakest GW of the next 3 — "
+                "use Free Hit now for maximum impact."
+            )
+        else:
+            worst_gw = max(["GW2", "GW3"], key=lambda g: deficit_gw2 if g == "GW2" else deficit_gw3)
+            chip_hold["free_hit"] = (
+                f"Free Hit: your squad looks stronger this GW than in coming weeks — "
+                f"consider saving for {worst_gw} when the deficit may be larger."
+            )
+
+    # ── Return best recommendation ────────────────────────────────────────────
+    # Priority: free_hit > bench_boost > triple_captain (most squad-altering first)
+    for chip in ("free_hit", "bench_boost", "triple_captain"):
+        if chip in chip_use:
+            return {"chip": chip, "reason": chip_use[chip]}
+
+    # No chip recommended — compile all hold notes
+    if chip_hold:
+        hold_summary = " | ".join(chip_hold.values())
+        return {"chip": None, "reason": hold_summary}
 
     return {
         "chip": None,
         "reason": (
-            "No chip recommended this gameweek. Looking at the next 3 GWs, your squad is well set — "
+            "No chip recommended this gameweek. Your squad is well set across the next 3 GWs — "
             "hold chips for double gameweeks, a blank for your rivals, or a standout captain fixture."
         ),
     }

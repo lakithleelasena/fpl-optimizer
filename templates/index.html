@@ -10,7 +10,8 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v2.0</p>
+        <p class="version">v3.0</p>
+        <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
     <div class="container">
@@ -57,7 +58,7 @@
                 </div>
                 <div class="summary-card">
                     <div class="value" id="summary-points">-</div>
-                    <div class="label">3GW Predicted Pts (XI)</div>
+                    <div class="label">Next GW Predicted Pts (XI)</div>
                 </div>
                 <div class="summary-card">
                     <div class="value" id="summary-count">-</div>
@@ -123,6 +124,7 @@
 
                 <div class="squad-progress">
                     <span id="squad-total-count">0</span>/15 players added
+                    <button class="btn-clear-squad" onclick="clearSavedSquad()">Clear Squad</button>
                 </div>
             </div>
 
@@ -173,6 +175,10 @@
                     <div class="summary-card">
                         <div class="value" id="ts-net-gain">-</div>
                         <div class="label">Net Points Gain</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="value" id="ts-total-3gw">-</div>
+                        <div class="label">3GW Predicted Pts (XI)</div>
                     </div>
                 </div>
 
@@ -308,7 +314,7 @@
                             <th onclick="sortTable('team')">Team</th>
                             <th onclick="sortTable('position')">Pos</th>
                             <th onclick="sortTable('cost')">Cost</th>
-                            <th onclick="sortTable('predicted_points')">3GW Pts</th>
+                            <th onclick="sortTable('predicted_points')">GW Pts</th>
                             <th onclick="sortTable('start_likelihood')">Start %</th>
                             <th onclick="sortTable('fixture_ease')">Fixture</th>
                             <th onclick="sortTable('opponent_score')">Opp Hist</th>

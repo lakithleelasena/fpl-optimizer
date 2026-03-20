@@ -27,6 +27,7 @@ class PlayerOut(BaseModel):
     chance_of_playing: Optional[int] = None
     minutes: int
     total_points: int
+    gw_pts: Optional[List[float]] = None  # per-GW predicted pts [gw1, gw2, gw3]
 
 
 class SquadPlayer(PlayerOut):
@@ -74,3 +75,4 @@ class TransferAdviceResponse(BaseModel):
     net_points_gain: float
     captain_id: Optional[int] = None
     vice_captain_id: Optional[int] = None
+    total_predicted_3gw: float = 0.0  # sum of starters' 3GW predicted points
