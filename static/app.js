@@ -102,13 +102,18 @@ async function runOptimize() {
     };
 
     try {
-        const resp = await fetch("/api/optimize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-        });
-        const data = await resp.json();
+        const [optResp, playersResp] = await Promise.all([
+            fetch("/api/optimize", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            }),
+            fetch(`/api/players?w_opponent=${body.w_opponent}&w_season=${body.w_season}&w_momentum=${body.w_momentum}&w_fixture=${body.w_fixture}`),
+        ]);
+        const data = await optResp.json();
+        allPlayers = await playersResp.json();
         renderSquad(data);
+        renderTable();
     } catch (e) {
         $("#pitch-starters").innerHTML = `<div class="loading">Optimization failed: ${e.message}</div>`;
     } finally {

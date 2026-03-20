@@ -20,6 +20,7 @@ from models import (
     TransferSuggestion,
 )
 from backtest import compute_backtest
+from config import W_FIXTURE, W_MOMENTUM, W_OPPONENT, W_SEASON
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
 
@@ -137,12 +138,17 @@ async def get_next_gw():
 
 
 @app.get("/api/players", response_model=List[PlayerOut])
-async def get_players():
+async def get_players(
+    w_opponent: float = W_OPPONENT,
+    w_season: float = W_SEASON,
+    w_momentum: float = W_MOMENTUM,
+    w_fixture: float = W_FIXTURE,
+):
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1)
+        pred = predict_points(p_gw1, w_opponent, w_season, w_momentum, w_fixture)
         result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
