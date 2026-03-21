@@ -5,10 +5,10 @@ from pydantic import BaseModel
 
 class OptimizeRequest(BaseModel):
     budget: int = 1000
-    w_opponent: float = 0.30
-    w_season: float = 0.25
-    w_momentum: float = 0.25
-    w_fixture: float = 0.20
+    w_opponent: float = 0.00
+    w_season: float = 0.20
+    w_momentum: float = 0.00
+    w_fixture: float = 0.80
 
 
 class PlayerOut(BaseModel):
@@ -48,10 +48,10 @@ class TransferRequest(BaseModel):
     free_transfers: int = 1
     budget_in_bank: int = 0          # tenths of £ (e.g. 5 = £0.5m)
     chips_available: List[str] = []  # "wildcard", "free_hit", "bench_boost", "triple_captain"
-    w_opponent: float = 0.30
-    w_season: float = 0.25
-    w_momentum: float = 0.25
-    w_fixture: float = 0.20
+    w_opponent: float = 0.00
+    w_season: float = 0.20
+    w_momentum: float = 0.00
+    w_fixture: float = 0.80
 
 
 class TransferSuggestion(BaseModel):
