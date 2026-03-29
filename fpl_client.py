@@ -121,6 +121,14 @@ async def fetch_all_data() -> dict:
                 gw_fixture_map[fix["event"]].setdefault(h, []).append(a)
                 gw_fixture_map[fix["event"]].setdefault(a, []).append(h)
 
+        # Per-GW home/away map: {gw_id: {team_id: [bool]}} — True if team is home
+        gw_home_map: dict[int, dict[int, list[bool]]] = {gw: {} for gw in upcoming_gws}
+        for fix in fixtures:
+            if fix["event"] in gw_home_map:
+                h, a = fix["team_h"], fix["team_a"]
+                gw_home_map[fix["event"]].setdefault(h, []).append(True)
+                gw_home_map[fix["event"]].setdefault(a, []).append(False)
+
         str_range = STRENGTH_MAX - STRENGTH_MIN
         mid_str = (STRENGTH_MAX + STRENGTH_MIN) / 2
 
@@ -146,6 +154,8 @@ async def fetch_all_data() -> dict:
                     "total_points": h["total_points"],
                     "minutes": h["minutes"],
                     "opponent_team": h["opponent_team"],
+                    "was_home": h.get("was_home", False),
+                    "xgi": float(h.get("expected_goal_involvements") or 0),
                 }
                 for h in history
             ]
@@ -173,10 +183,19 @@ async def fetch_all_data() -> dict:
                 else:
                     gw_ease[gw_id] = None  # blank GW
 
+            # Build per-GW home fraction (1.0 = all home, 0.0 = all away, 0.5 = mixed/unknown)
+            gw_home: dict[int, float] = {}
+            for gw_id in upcoming_gws:
+                flags = gw_home_map[gw_id].get(team_id, [])
+                gw_home[gw_id] = sum(flags) / len(flags) if flags else 0.5
+
             # Flatten all opponents and strengths across 3 GWs
             all_opponents = [o for opps in gw_fixtures.values() for o in opps]
             all_opp_strengths = [team_strengths[o] for o in all_opponents if o in team_strengths]
             n_fixtures = len(all_opponents)
+
+            # xG involvement from bootstrap element
+            xgi = float(p.get("expected_goal_involvements") or 0)
 
             players.append({
                 "id": pid,
@@ -193,6 +212,8 @@ async def fetch_all_data() -> dict:
                 "n_fixtures": n_fixtures,
                 "gw_fixtures": gw_fixtures,
                 "gw_ease": gw_ease,
+                "gw_home": gw_home,
+                "xgi": xgi,
                 "stats": stats,
             })
 

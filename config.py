@@ -14,10 +14,10 @@ MIN_STARTING = {"GKP": 1, "DEF": 3, "MID": 2, "FWD": 1}
 
 MAX_PER_TEAM = 3
 
-W_OPPONENT = 0.00
+W_HOME_AWAY = 0.10
 W_SEASON = 0.20
-W_MOMENTUM = 0.00
-W_FIXTURE = 0.80
+W_XG = 0.10
+W_FIXTURE = 0.60
 
 # FPL team strength rating bounds (from bootstrap-static strength_overall fields)
 STRENGTH_MIN = 975

@@ -3,7 +3,7 @@ from __future__ import annotations
 from config import STRENGTH_MAX, STRENGTH_MIN
 
 # Default weights (must be 0.1-multiples summing to 1.0)
-DEFAULT_WEIGHTS = (0.30, 0.20, 0.30, 0.20)
+DEFAULT_WEIGHTS = (0.10, 0.20, 0.10, 0.60)
 
 
 def _weight_combinations() -> list[tuple[float, float, float, float]]:
@@ -44,9 +44,9 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
     # ── Precompute component scores per player-GW ──────────────────────────────
     gw_col: list[int] = []
     actual_col: list[float] = []
-    opp_col: list[float] = []
+    ha_col: list[float] = []
     seas_col: list[float] = []
-    mom_col: list[float] = []
+    xg_col: list[float] = []
     fix_col: list[float] = []
     sl_col: list[float] = []
 
@@ -64,13 +64,16 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
                 continue  # need enough history for a meaningful prediction
 
             season_avg = sum(h["total_points"] for h in played_prior) / len(played_prior)
-            recent_pts = [h["total_points"] for h in played_prior[-3:]]
-            momentum = sum(recent_pts) / len(recent_pts)
+
+            # Home/Away signal: use was_home from this entry to compute score
+            was_home = entry.get("was_home", False)
+            home_away_score = season_avg * (0.85 + (1.0 if was_home else 0.0) * 0.30)
+
+            # xG Involvement signal: cumulative xgi from prior played games
+            xgi_prior = sum(h.get("xgi", 0.0) for h in played_prior)
+            xg_score = (xgi_prior / len(played_prior)) * 15
 
             opp_id = entry["opponent_team"]
-            opp_hist = [h["total_points"] for h in played_prior if h["opponent_team"] == opp_id]
-            opponent_score = sum(opp_hist) / len(opp_hist) if opp_hist else season_avg
-
             opp_strength = team_strengths.get(opp_id, mid_str)
             ease = max(0.0, min(1.0, (STRENGTH_MAX - opp_strength) / str_range))
             fixture_score = season_avg * (0.5 + ease)
@@ -79,9 +82,9 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
 
             gw_col.append(gw)
             actual_col.append(float(entry["total_points"]))
-            opp_col.append(opponent_score)
+            ha_col.append(home_away_score)
             seas_col.append(season_avg)
-            mom_col.append(momentum)
+            xg_col.append(xg_score)
             fix_col.append(fixture_score)
             sl_col.append(sl)
 
@@ -93,32 +96,32 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
 
     # ── Evaluate all weight combinations (fast linear pass) ────────────────────
     weight_combos = _weight_combinations()
-    combo_maes: list[tuple] = []  # (mae, w_o, w_s, w_m, w_f)
+    combo_maes: list[tuple] = []  # (mae, w_ha, w_s, w_xg, w_f)
 
-    for w_o, w_s, w_m, w_f in weight_combos:
-        total_w = w_o + w_s + w_m + w_f
+    for w_ha, w_s, w_xg, w_f in weight_combos:
+        total_w = w_ha + w_s + w_xg + w_f
         if total_w == 0:
             continue
         total_err = 0.0
         for idx in range(n):
             pred = (
-                (w_o * opp_col[idx] + w_s * seas_col[idx] + w_m * mom_col[idx] + w_f * fix_col[idx])
+                (w_ha * ha_col[idx] + w_s * seas_col[idx] + w_xg * xg_col[idx] + w_f * fix_col[idx])
                 / total_w
                 * sl_col[idx]
             )
             total_err += abs(pred - actual_col[idx])
-        combo_maes.append((round(total_err / n, 4), w_o, w_s, w_m, w_f))
+        combo_maes.append((round(total_err / n, 4), w_ha, w_s, w_xg, w_f))
 
     combo_maes.sort()
 
     # ── Per-GW MAE for a specific weight tuple ─────────────────────────────────
-    def per_gw_mae(w_o: float, w_s: float, w_m: float, w_f: float) -> dict[str, float]:
-        total_w = w_o + w_s + w_m + w_f or 1.0
+    def per_gw_mae(w_ha: float, w_s: float, w_xg: float, w_f: float) -> dict[str, float]:
+        total_w = w_ha + w_s + w_xg + w_f or 1.0
         gw_errs: dict[int, float] = {}
         gw_counts: dict[int, int] = {}
         for idx in range(n):
             pred = (
-                (w_o * opp_col[idx] + w_s * seas_col[idx] + w_m * mom_col[idx] + w_f * fix_col[idx])
+                (w_ha * ha_col[idx] + w_s * seas_col[idx] + w_xg * xg_col[idx] + w_f * fix_col[idx])
                 / total_w
                 * sl_col[idx]
             )
@@ -127,12 +130,12 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
             gw_counts[g] = gw_counts.get(g, 0) + 1
         return {str(g): round(gw_errs[g] / gw_counts[g], 3) for g in sorted(gw_errs)}
 
-    best_mae, bw_o, bw_s, bw_m, bw_f = combo_maes[0]
+    best_mae, bw_ha, bw_s, bw_xg, bw_f = combo_maes[0]
 
     # Find default in combo list
     default_entry = next(
-        ((mae, w_o, w_s, w_m, w_f) for mae, w_o, w_s, w_m, w_f in combo_maes
-         if (w_o, w_s, w_m, w_f) == DEFAULT_WEIGHTS),
+        ((mae, w_ha, w_s, w_xg, w_f) for mae, w_ha, w_s, w_xg, w_f in combo_maes
+         if (w_ha, w_s, w_xg, w_f) == DEFAULT_WEIGHTS),
         combo_maes[-1],
     )
     default_mae = default_entry[0]
@@ -140,32 +143,32 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
     # ── Sensitivity: best MAE at each value of each weight ────────────────────
     def sensitivity(weight_idx: int) -> list[dict]:
         groups: dict[float, float] = {}
-        for mae, w_o, w_s, w_m, w_f in combo_maes:
-            val = (w_o, w_s, w_m, w_f)[weight_idx]
+        for mae, w_ha, w_s, w_xg, w_f in combo_maes:
+            val = (w_ha, w_s, w_xg, w_f)[weight_idx]
             if val not in groups or mae < groups[val]:
                 groups[val] = mae
         return [{"value": v, "mae": round(groups[v], 4)} for v in sorted(groups)]
 
     top_combos = [
-        {"w_opponent": w_o, "w_season": w_s, "w_momentum": w_m, "w_fixture": w_f, "mae": mae}
-        for mae, w_o, w_s, w_m, w_f in combo_maes[:20]
+        {"w_home_away": w_ha, "w_season": w_s, "w_xg": w_xg, "w_fixture": w_f, "mae": mae}
+        for mae, w_ha, w_s, w_xg, w_f in combo_maes[:20]
     ]
 
     return {
         "top_combinations": top_combos,
-        "best": {"w_opponent": bw_o, "w_season": bw_s, "w_momentum": bw_m, "w_fixture": bw_f, "mae": best_mae},
+        "best": {"w_home_away": bw_ha, "w_season": bw_s, "w_xg": bw_xg, "w_fixture": bw_f, "mae": best_mae},
         "default_mae": default_mae,
         "best_mae": best_mae,
         "improvement_pct": round((default_mae - best_mae) / default_mae * 100, 2) if default_mae > 0 else 0.0,
         "per_gw_default": per_gw_mae(*DEFAULT_WEIGHTS),
-        "per_gw_best": per_gw_mae(bw_o, bw_s, bw_m, bw_f),
+        "per_gw_best": per_gw_mae(bw_ha, bw_s, bw_xg, bw_f),
         "gameweeks": [str(g) for g in gws],
         "total_data_points": n,
         "total_combinations_tested": len(combo_maes),
         "sensitivity": {
-            "w_opponent": sensitivity(0),
+            "w_home_away": sensitivity(0),
             "w_season": sensitivity(1),
-            "w_momentum": sensitivity(2),
+            "w_xg": sensitivity(2),
             "w_fixture": sensitivity(3),
         },
     }
