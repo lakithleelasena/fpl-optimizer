@@ -13,7 +13,7 @@ let mySquad = { GKP: [], DEF: [], MID: [], FWD: [] };
 
 document.addEventListener("DOMContentLoaded", () => {
     // Weight slider sync
-    ["opponent", "season", "momentum", "fixture"].forEach((w) => {
+    ["home-away", "season", "xg", "fixture"].forEach((w) => {
         const slider = $(`#w-${w}`);
         const display = $(`#w-${w}-val`);
         slider.addEventListener("input", () => { display.textContent = slider.value; });
@@ -95,9 +95,9 @@ async function runOptimize() {
 
     const body = {
         budget: parseInt($("#budget").value) || 1000,
-        w_opponent: parseFloat($("#w-opponent").value),
+        w_home_away: parseFloat($("#w-home-away").value),
         w_season: parseFloat($("#w-season").value),
-        w_momentum: parseFloat($("#w-momentum").value),
+        w_xg: parseFloat($("#w-xg").value),
         w_fixture: parseFloat($("#w-fixture").value),
     };
 
@@ -107,8 +107,24 @@ async function runOptimize() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || "Server error");
+        }
         const data = await resp.json();
         renderSquad(data);
+
+        // Refresh player table with the same weights so scores match pitch cards
+        try {
+            const playersResp = await fetch(
+                `/api/players?w_home_away=${body.w_home_away}&w_season=${body.w_season}&w_xg=${body.w_xg}&w_fixture=${body.w_fixture}`
+            );
+            if (!playersResp.ok) throw new Error(`HTTP ${playersResp.status}`);
+            allPlayers = await playersResp.json();
+        } catch (tableErr) {
+            console.warn("Could not refresh player table weights:", tableErr);
+        }
+        renderTable();
     } catch (e) {
         $("#pitch-starters").innerHTML = `<div class="loading">Optimization failed: ${e.message}</div>`;
     } finally {
@@ -442,9 +458,9 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false) 
             <div class="player-cost">£${p.cost.toFixed(1)}m</div>
             <div class="start-likelihood" style="color:${slColor}">${slPct}% start</div>
             <div class="breakdown">
-                <span>O:${p.opponent_score.toFixed(1)}</span>
+                <span>H/A:${p.home_away_score.toFixed(1)}</span>
                 <span>S:${p.season_avg.toFixed(1)}</span>
-                <span>M:${p.momentum.toFixed(1)}</span>
+                <span>xG:${p.xg_score.toFixed(1)}</span>
                 <span style="color:${fixtureColor(p.fixture_ease)}">FD:${fixtureLabel(p.fixture_ease)}</span>
             </div>
         </div>`;
@@ -485,9 +501,9 @@ function renderTable() {
             <td style="color:#00ff87;font-weight:600">${p.predicted_points.toFixed(1)}</td>
             <td style="color:${slColor}">${slPct}%</td>
             <td style="color:${fixtureColor(p.fixture_ease)}">${fixtureLabel(p.fixture_ease)}</td>
-            <td>${p.opponent_score.toFixed(1)}</td>
+            <td>${p.home_away_score.toFixed(1)}</td>
             <td>${p.season_avg.toFixed(1)}</td>
-            <td>${p.momentum.toFixed(1)}</td>
+            <td>${p.xg_score.toFixed(1)}</td>
             <td>
                 <button class="add-btn ${addDisabled ? "add-btn-disabled" : ""}"
                     ${addDisabled ? "disabled" : `onclick='addPlayerToSquad(${JSON.stringify(p)})'`}>
@@ -552,9 +568,9 @@ function renderBacktest(data) {
     const b = data.best;
     $("#bt-best-weights").innerHTML = `
         <div class="best-weights-row">
-            <div class="bw-chip"><span class="bw-label">Opponent</span><span class="bw-val">${b.w_opponent.toFixed(1)}</span></div>
+            <div class="bw-chip"><span class="bw-label">H/A</span><span class="bw-val">${b.w_home_away.toFixed(1)}</span></div>
             <div class="bw-chip"><span class="bw-label">Season Avg</span><span class="bw-val">${b.w_season.toFixed(1)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Momentum</span><span class="bw-val">${b.w_momentum.toFixed(1)}</span></div>
+            <div class="bw-chip"><span class="bw-label">xG</span><span class="bw-val">${b.w_xg.toFixed(1)}</span></div>
             <div class="bw-chip"><span class="bw-label">Fixture</span><span class="bw-val">${b.w_fixture.toFixed(1)}</span></div>
             <div class="bw-chip bw-mae"><span class="bw-label">MAE</span><span class="bw-val">${b.mae.toFixed(4)}</span></div>
         </div>`;
@@ -563,7 +579,7 @@ function renderBacktest(data) {
     $("#bt-gw-chart").innerHTML = lineChart(
         [
             { label: "Best weights", color: "#00ff87", data: data.per_gw_best },
-            { label: "Default weights (0.3/0.2/0.3/0.2)", color: "#f5a623", data: data.per_gw_default },
+            { label: "Default weights (0.1/0.2/0.1/0.6)", color: "#f5a623", data: data.per_gw_default },
         ],
         data.gameweeks
     );
@@ -571,26 +587,26 @@ function renderBacktest(data) {
     // Sensitivity
     const sens = data.sensitivity;
     $("#bt-sensitivity").innerHTML = [
-        sensitivityChart(sens.w_opponent, "Opponent History Weight"),
-        sensitivityChart(sens.w_season,   "Season Avg Weight"),
-        sensitivityChart(sens.w_momentum, "Momentum Weight"),
-        sensitivityChart(sens.w_fixture,  "Fixture Difficulty Weight"),
+        sensitivityChart(sens.w_home_away, "Home/Away Weight"),
+        sensitivityChart(sens.w_season,    "Season Avg Weight"),
+        sensitivityChart(sens.w_xg,        "xG Involvement Weight"),
+        sensitivityChart(sens.w_fixture,   "Fixture Difficulty Weight"),
     ].join("");
 
     // Top combos table
-    const defaultW = [0.3, 0.2, 0.3, 0.2];
+    const defaultW = [0.1, 0.2, 0.1, 0.6];
     $("#bt-combos-body").innerHTML = data.top_combinations.map((c, i) => {
-        const isDefault = Math.abs(c.w_opponent - defaultW[0]) < 0.01 &&
-                          Math.abs(c.w_season   - defaultW[1]) < 0.01 &&
-                          Math.abs(c.w_momentum - defaultW[2]) < 0.01 &&
-                          Math.abs(c.w_fixture  - defaultW[3]) < 0.01;
+        const isDefault = Math.abs(c.w_home_away - defaultW[0]) < 0.01 &&
+                          Math.abs(c.w_season     - defaultW[1]) < 0.01 &&
+                          Math.abs(c.w_xg         - defaultW[2]) < 0.01 &&
+                          Math.abs(c.w_fixture    - defaultW[3]) < 0.01;
         const isBest = i === 0;
         const cls = isBest ? "row-best" : isDefault ? "row-default" : "";
         return `<tr class="${cls}">
             <td>${i + 1}${isBest ? " 🏆" : isDefault ? " (default)" : ""}</td>
-            <td>${c.w_opponent.toFixed(1)}</td>
+            <td>${c.w_home_away.toFixed(1)}</td>
             <td>${c.w_season.toFixed(1)}</td>
-            <td>${c.w_momentum.toFixed(1)}</td>
+            <td>${c.w_xg.toFixed(1)}</td>
             <td>${c.w_fixture.toFixed(1)}</td>
             <td style="color:#00ff87;font-weight:700">${c.mae.toFixed(4)}</td>
         </tr>`;
@@ -607,10 +623,10 @@ function applyBestWeights() {
         const el = $(`#${id}`);
         if (el) { el.value = val; el.dispatchEvent(new Event("input")); }
     };
-    setSlider("w-opponent", b.w_opponent);
-    setSlider("w-season",   b.w_season);
-    setSlider("w-momentum", b.w_momentum);
-    setSlider("w-fixture",  b.w_fixture);
+    setSlider("w-home-away", b.w_home_away);
+    setSlider("w-season",    b.w_season);
+    setSlider("w-xg",        b.w_xg);
+    setSlider("w-fixture",   b.w_fixture);
 
     // Switch to optimizer tab
     $$(".tab-btn").forEach(btn => btn.classList.remove("active"));

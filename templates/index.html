@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FPL Squad Optimizer</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
 </head>
 <body>
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.0</p>
+        <p class="version">v3.1</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -31,20 +31,20 @@
                     <input type="number" id="budget" value="1000" min="500" max="2000" step="10">
                 </div>
                 <div class="control-group">
-                    <label>Opponent Weight <span class="weight-value" id="w-opponent-val">0.30</span></label>
-                    <input type="range" id="w-opponent" min="0" max="1" step="0.05" value="0.30">
+                    <label>Home/Away Weight <span class="weight-value" id="w-home-away-val">0.10</span></label>
+                    <input type="range" id="w-home-away" min="0" max="1" step="0.05" value="0.10">
                 </div>
                 <div class="control-group">
                     <label>Season Avg Weight <span class="weight-value" id="w-season-val">0.20</span></label>
                     <input type="range" id="w-season" min="0" max="1" step="0.05" value="0.20">
                 </div>
                 <div class="control-group">
-                    <label>Momentum Weight <span class="weight-value" id="w-momentum-val">0.30</span></label>
-                    <input type="range" id="w-momentum" min="0" max="1" step="0.05" value="0.30">
+                    <label>xG Involvement Weight <span class="weight-value" id="w-xg-val">0.10</span></label>
+                    <input type="range" id="w-xg" min="0" max="1" step="0.05" value="0.10">
                 </div>
                 <div class="control-group">
-                    <label>Fixture Difficulty Weight <span class="weight-value" id="w-fixture-val">0.20</span></label>
-                    <input type="range" id="w-fixture" min="0" max="1" step="0.05" value="0.20">
+                    <label>Fixture Difficulty Weight <span class="weight-value" id="w-fixture-val">0.60</span></label>
+                    <input type="range" id="w-fixture" min="0" max="1" step="0.05" value="0.60">
                 </div>
                 <div class="control-group" style="display:flex;align-items:end">
                     <button class="btn-optimize" id="btn-optimize">Optimize Squad</button>
@@ -260,7 +260,7 @@
                     <h2>MAE per Gameweek</h2>
                     <div class="chart-legend">
                         <span class="legend-dot" style="background:#00ff87"></span> Best weights &nbsp;
-                        <span class="legend-dot" style="background:#f5a623"></span> Default weights (0.3 / 0.2 / 0.3 / 0.2)
+                        <span class="legend-dot" style="background:#f5a623"></span> Default weights (0.1 / 0.2 / 0.1 / 0.6)
                     </div>
                     <div id="bt-gw-chart"></div>
                 </div>
@@ -280,9 +280,9 @@
                             <thead>
                                 <tr>
                                     <th>#</th>
-                                    <th>Opponent</th>
+                                    <th>H/A</th>
                                     <th>Season Avg</th>
-                                    <th>Momentum</th>
+                                    <th>xG</th>
                                     <th>Fixture</th>
                                     <th>MAE</th>
                                 </tr>
@@ -317,9 +317,9 @@
                             <th onclick="sortTable('predicted_points')">GW Pts</th>
                             <th onclick="sortTable('start_likelihood')">Start %</th>
                             <th onclick="sortTable('fixture_ease')">Fixture</th>
-                            <th onclick="sortTable('opponent_score')">Opp Hist</th>
+                            <th onclick="sortTable('home_away_score')">H/A Score</th>
                             <th onclick="sortTable('season_avg')">Season</th>
-                            <th onclick="sortTable('momentum')">Momentum</th>
+                            <th onclick="sortTable('xg_score')">xG Score</th>
                             <th>Add</th>
                         </tr>
                     </thead>
@@ -332,6 +332,6 @@
 
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v={{ cache_bust }}"></script>
 </body>
 </html>

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Changes every restart/deploy — forces browser to fetch fresh static files
+_BUILD_TS = int(time.time())
 
 from fpl_client import fetch_all_data
 from models import (
@@ -20,6 +24,7 @@ from models import (
     TransferSuggestion,
 )
 from backtest import compute_backtest
+from config import W_FIXTURE, W_HOME_AWAY, W_SEASON, W_XG
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
 
@@ -30,7 +35,11 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    resp = templates.TemplateResponse(
+        "index.html", {"request": request, "cache_bust": _BUILD_TS}
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
@@ -40,7 +49,8 @@ def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
         return player
     gw1_opps = player["gw_fixtures"].get(gw1, [])
     gw1_strengths = [team_strengths.get(o, 0) for o in gw1_opps]
-    return {**player, "opponents": gw1_opps, "opponent_strengths": gw1_strengths, "n_fixtures": len(gw1_opps)}
+    is_home = player.get("gw_home", {}).get(gw1, 0.5)
+    return {**player, "opponents": gw1_opps, "opponent_strengths": gw1_strengths, "n_fixtures": len(gw1_opps), "is_home": is_home}
 
 
 def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
@@ -71,9 +81,9 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "position": player["position"],
         "cost": player["cost"] / 10,
         "predicted_points": round(prediction["predicted_points"] * n_fix, 2),
-        "opponent_score": prediction["opponent_score"],
+        "home_away_score": prediction["home_away_score"],
         "season_avg": prediction["season_avg"],
-        "momentum": prediction["momentum"],
+        "xg_score": prediction["xg_score"],
         "fixture_ease": prediction["fixture_ease"],
         "start_likelihood": prediction["start_likelihood"],
         "chance_of_playing": player.get("chance_of_playing"),
@@ -96,9 +106,9 @@ def _to_player_out(p: dict) -> PlayerOut:
         position=p["position"],
         cost=round(p["cost"] / 10, 1),
         predicted_points=p["predicted_points"],
-        opponent_score=p["opponent_score"],
+        home_away_score=p["home_away_score"],
         season_avg=p["season_avg"],
-        momentum=p["momentum"],
+        xg_score=p["xg_score"],
         fixture_ease=p["fixture_ease"],
         start_likelihood=p["start_likelihood"],
         chance_of_playing=p.get("chance_of_playing"),
@@ -117,9 +127,9 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         position=p["position"],
         cost=round(p["cost"] / 10, 1),
         predicted_points=p["predicted_points"],
-        opponent_score=p["opponent_score"],
+        home_away_score=p["home_away_score"],
         season_avg=p["season_avg"],
-        momentum=p["momentum"],
+        xg_score=p["xg_score"],
         fixture_ease=p["fixture_ease"],
         start_likelihood=p["start_likelihood"],
         chance_of_playing=p.get("chance_of_playing"),
@@ -137,12 +147,17 @@ async def get_next_gw():
 
 
 @app.get("/api/players", response_model=List[PlayerOut])
-async def get_players():
+async def get_players(
+    w_home_away: float = W_HOME_AWAY,
+    w_season: float = W_SEASON,
+    w_xg: float = W_XG,
+    w_fixture: float = W_FIXTURE,
+):
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1)
+        pred = predict_points(p_gw1, w_home_away, w_season, w_xg, w_fixture)
         result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
@@ -155,7 +170,7 @@ async def run_optimize(req: OptimizeRequest):
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, req.w_opponent, req.w_season, req.w_momentum, req.w_fixture)
+        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xg, req.w_fixture)
         out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
         enriched.append(out)
@@ -200,7 +215,7 @@ async def get_transfer_advice(req: TransferRequest):
     # Build enriched players with raw cost for optimizer (3GW predictions for transfer/chip logic)
     enriched = []
     for p in data["players"]:
-        pred = predict_points(p, req.w_opponent, req.w_season, req.w_momentum, req.w_fixture)
+        pred = predict_points(p, req.w_home_away, req.w_season, req.w_xg, req.w_fixture)
         out = _build_player_out(p, pred)
         out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
         out["gw_pts"] = _player_gw_pts(out, data["upcoming_gws"])
