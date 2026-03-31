@@ -24,7 +24,7 @@ from models import (
     TransferSuggestion,
 )
 from backtest import compute_backtest
-from config import W_FIXTURE, W_HOME_AWAY, W_SEASON, W_XG
+from config import W_FIXTURE, W_FORM, W_HOME_AWAY, W_SEASON, W_THREAT, W_XGC, W_XGI
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
 
@@ -86,6 +86,9 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "xg_score": prediction["xg_score"],
         "fixture_ease": prediction["fixture_ease"],
         "start_likelihood": prediction["start_likelihood"],
+        "form_score": prediction["form_score"],
+        "threat_score": prediction["threat_score"],
+        "xgc_score": prediction["xgc_score"],
         "chance_of_playing": player.get("chance_of_playing"),
         "minutes": player["minutes"],
         "total_points": player["total_points"],
@@ -115,6 +118,9 @@ def _to_player_out(p: dict) -> PlayerOut:
         minutes=p["minutes"],
         total_points=p["total_points"],
         gw_pts=p.get("gw_pts"),
+        form_score=p.get("form_score", 0.0),
+        threat_score=p.get("threat_score", 0.0),
+        xgc_score=p.get("xgc_score", 0.0),
     )
 
 
@@ -136,6 +142,9 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         minutes=p["minutes"],
         total_points=p["total_points"],
         gw_pts=p.get("gw_pts"),
+        form_score=p.get("form_score", 0.0),
+        threat_score=p.get("threat_score", 0.0),
+        xgc_score=p.get("xgc_score", 0.0),
         is_starter=is_starter,
     )
 
@@ -150,14 +159,17 @@ async def get_next_gw():
 async def get_players(
     w_home_away: float = W_HOME_AWAY,
     w_season: float = W_SEASON,
-    w_xg: float = W_XG,
+    w_xgi: float = W_XGI,
     w_fixture: float = W_FIXTURE,
+    w_form: float = W_FORM,
+    w_threat: float = W_THREAT,
+    w_xgc: float = W_XGC,
 ):
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, w_home_away, w_season, w_xg, w_fixture)
+        pred = predict_points(p_gw1, w_home_away, w_season, w_xgi, w_fixture, w_form, w_threat, w_xgc)
         result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
@@ -170,7 +182,7 @@ async def run_optimize(req: OptimizeRequest):
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xg, req.w_fixture)
+        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
         out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
         enriched.append(out)
@@ -215,7 +227,7 @@ async def get_transfer_advice(req: TransferRequest):
     # Build enriched players with raw cost for optimizer (3GW predictions for transfer/chip logic)
     enriched = []
     for p in data["players"]:
-        pred = predict_points(p, req.w_home_away, req.w_season, req.w_xg, req.w_fixture)
+        pred = predict_points(p, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
         out = _build_player_out(p, pred)
         out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
         out["gw_pts"] = _player_gw_pts(out, data["upcoming_gws"])
