@@ -161,6 +161,7 @@ async def fetch_all_data() -> dict:
                     "threat": float(h.get("threat") or 0),
                     "xgc": float(h.get("expected_goals_conceded") or 0),
                     "position": pos_lookup.get(player_id, "MID"),
+                    "ep_this": float(h.get("ep_this") or 0),  # FPL's own GW prediction
                 }
                 for h in history
             ]

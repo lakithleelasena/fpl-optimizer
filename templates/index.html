@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.2</p>
+        <p class="version">v3.3</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -258,6 +258,14 @@
                         <div class="value" id="bt-combos">-</div>
                         <div class="label">Combos Tested</div>
                     </div>
+                    <div class="summary-card">
+                        <div class="value" id="bt-ep-baseline-mae">-</div>
+                        <div class="label">FPL ep_next MAE</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="value" id="bt-ep-vs-best">-</div>
+                        <div class="label">Our Model vs FPL</div>
+                    </div>
                 </div>
 
                 <!-- Best weights banner -->
@@ -272,7 +280,8 @@
                     <h2>MAE per Gameweek</h2>
                     <div class="chart-legend">
                         <span class="legend-dot" style="background:#00ff87"></span> Best weights &nbsp;
-                        <span class="legend-dot" style="background:#f5a623"></span> Default weights (0.05 / 0.20 / 0.10 / 0.35 / 0.10 / 0.10 / 0.20)
+                        <span class="legend-dot" style="background:#f5a623"></span> Default weights &nbsp;
+                        <span class="legend-dot" style="background:#a78bfa"></span> FPL ep_next baseline
                     </div>
                     <div id="bt-gw-chart"></div>
                 </div>

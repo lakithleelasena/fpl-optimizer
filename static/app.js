@@ -567,6 +567,29 @@ function renderBacktest(data) {
     $("#bt-datapoints").textContent = data.total_data_points.toLocaleString();
     $("#bt-combos").textContent = data.total_combinations_tested;
 
+    // FPL ep_next baseline
+    const epMaeEl = $("#bt-ep-baseline-mae");
+    const epVsBestEl = $("#bt-ep-vs-best");
+    if (data.ep_baseline_mae != null) {
+        epMaeEl.textContent = data.ep_baseline_mae.toFixed(4);
+        const diff = data.ep_baseline_mae - data.best_mae;
+        const pct = (diff / data.ep_baseline_mae * 100).toFixed(1);
+        if (diff > 0) {
+            epVsBestEl.textContent = `${pct}% better`;
+            epVsBestEl.style.color = "#00ff87";
+        } else if (diff < 0) {
+            epVsBestEl.textContent = `${Math.abs(pct)}% worse`;
+            epVsBestEl.style.color = "#ff6b6b";
+        } else {
+            epVsBestEl.textContent = "Equal";
+            epVsBestEl.style.color = "#e0e0e0";
+        }
+    } else {
+        epMaeEl.textContent = "N/A";
+        epVsBestEl.textContent = "No ep_this data";
+        epVsBestEl.style.color = "#8b949e";
+    }
+
     // Best weights banner
     const b = data.best;
     $("#bt-best-weights").innerHTML = `
@@ -581,14 +604,15 @@ function renderBacktest(data) {
             <div class="bw-chip bw-mae"><span class="bw-label">MAE</span><span class="bw-val">${b.mae.toFixed(4)}</span></div>
         </div>`;
 
-    // Per-GW chart
-    $("#bt-gw-chart").innerHTML = lineChart(
-        [
-            { label: "Best weights", color: "#00ff87", data: data.per_gw_best },
-            { label: "Default weights (0.05/0.20/0.10/0.35/0.10/0.10/0.20)", color: "#f5a623", data: data.per_gw_default },
-        ],
-        data.gameweeks
-    );
+    // Per-GW chart — include FPL ep_next baseline if available
+    const gwSeries = [
+        { label: "Best weights", color: "#00ff87", data: data.per_gw_best },
+        { label: "Default weights", color: "#f5a623", data: data.per_gw_default },
+    ];
+    if (data.ep_baseline_mae != null && Object.keys(data.ep_baseline_per_gw).length > 0) {
+        gwSeries.push({ label: "FPL ep_next baseline", color: "#a78bfa", data: data.ep_baseline_per_gw });
+    }
+    $("#bt-gw-chart").innerHTML = lineChart(gwSeries, data.gameweeks);
 
     // Sensitivity
     const sens = data.sensitivity;
