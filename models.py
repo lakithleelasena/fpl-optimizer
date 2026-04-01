@@ -34,6 +34,7 @@ class PlayerOut(BaseModel):
     form_score: float = 0.0
     threat_score: float = 0.0
     xgc_score: float = 0.0
+    ep_next: float = 0.0
 
 
 class SquadPlayer(PlayerOut):

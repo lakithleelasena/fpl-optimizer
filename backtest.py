@@ -131,39 +131,6 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
     if not gw_col:
         raise ValueError("No data points for backtest — not enough completed gameweeks.")
 
-    # ── FPL ep_this baseline ─────────────────────────────────────────────────
-    ep_pred_list: list[float] = []
-    ep_actual_list: list[float] = []
-    ep_gw_list: list[int] = []
-
-    for player_id, history in raw_histories.items():
-        history_sorted = sorted(history, key=lambda h: h["round"])
-        for entry in history_sorted:
-            gw_e = entry["round"]
-            if gw_e >= current_gw:
-                continue
-            ep = entry.get("ep_this", 0.0)
-            if ep > 0:
-                ep_pred_list.append(float(ep))
-                ep_actual_list.append(float(entry["total_points"]))
-                ep_gw_list.append(gw_e)
-
-    ep_baseline_mae: float | None = None
-    ep_baseline_per_gw: dict[str, float] = {}
-    ep_baseline_points = len(ep_pred_list)
-
-    if ep_pred_list:
-        _ep_preds = np.array(ep_pred_list, dtype=np.float64)
-        _ep_actuals = np.array(ep_actual_list, dtype=np.float64)
-        _ep_gws = np.array(ep_gw_list)
-        ep_baseline_mae = round(float(np.mean(np.abs(_ep_preds - _ep_actuals))), 4)
-        for g in sorted(set(ep_gw_list)):
-            idx = _ep_gws == g
-            ep_baseline_per_gw[str(g)] = round(
-                float(np.mean(np.abs(_ep_preds[idx] - _ep_actuals[idx]))), 3
-            )
-    # ────────────────────────────────────────────────────────────────────────────
-
     n = len(gw_col)
     gws = sorted(set(gw_col))
 
@@ -261,8 +228,4 @@ def compute_backtest(raw_histories: dict, team_strengths: dict, current_gw: int)
             "w_threat": sensitivity(5),
             "w_xgc": sensitivity(6),
         },
-        # FPL's own ep_this baseline — how accurate is the FPL model?
-        "ep_baseline_mae": ep_baseline_mae,
-        "ep_baseline_per_gw": ep_baseline_per_gw,
-        "ep_baseline_data_points": ep_baseline_points,
     }

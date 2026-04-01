@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.3</p>
+        <p class="version">v3.4</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -20,6 +20,7 @@
         <div class="tabs">
             <button class="tab-btn active" data-tab="optimizer">Squad Optimizer</button>
             <button class="tab-btn" data-tab="myteam">My Team &amp; Transfers</button>
+            <button class="tab-btn" data-tab="players">All Player Predictions</button>
             <button class="tab-btn" data-tab="backtest">Backtest</button>
         </div>
 
@@ -219,6 +220,44 @@
             </div>
         </div>
 
+        <!-- ===== TAB: All Player Predictions ===== -->
+        <div class="tab-content hidden" id="tab-players">
+            <div class="table-section">
+                <h2>All Player Predictions</h2>
+                <div class="table-controls">
+                    <input type="text" id="search" placeholder="Search by name or team...">
+                    <button class="filter-btn active" data-pos="ALL">All</button>
+                    <button class="filter-btn" data-pos="GKP">GKP</button>
+                    <button class="filter-btn" data-pos="DEF">DEF</button>
+                    <button class="filter-btn" data-pos="MID">MID</button>
+                    <button class="filter-btn" data-pos="FWD">FWD</button>
+                </div>
+                <div style="overflow-x:auto">
+                    <table class="players-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortTable('name')">Name</th>
+                                <th onclick="sortTable('team')">Team</th>
+                                <th onclick="sortTable('position')">Pos</th>
+                                <th onclick="sortTable('cost')">Cost</th>
+                                <th onclick="sortTable('predicted_points')">GW Pts</th>
+                                <th onclick="sortTable('start_likelihood')">Start %</th>
+                                <th onclick="sortTable('fixture_ease')">Fixture</th>
+                                <th onclick="sortTable('ep_next')">FPL ep_next</th>
+                                <th onclick="sortTable('season_avg')">Season</th>
+                                <th onclick="sortTable('form_score')">Form</th>
+                                <th onclick="sortTable('xg_score')">xG/xGC</th>
+                                <th>Add</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body">
+                            <tr><td colspan="12" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- ===== TAB: Backtest ===== -->
         <div class="tab-content hidden" id="tab-backtest">
             <div class="section-card">
@@ -258,14 +297,6 @@
                         <div class="value" id="bt-combos">-</div>
                         <div class="label">Combos Tested</div>
                     </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-ep-baseline-mae">-</div>
-                        <div class="label">FPL ep_next MAE</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-ep-vs-best">-</div>
-                        <div class="label">Our Model vs FPL</div>
-                    </div>
                 </div>
 
                 <!-- Best weights banner -->
@@ -280,8 +311,7 @@
                     <h2>MAE per Gameweek</h2>
                     <div class="chart-legend">
                         <span class="legend-dot" style="background:#00ff87"></span> Best weights &nbsp;
-                        <span class="legend-dot" style="background:#f5a623"></span> Default weights &nbsp;
-                        <span class="legend-dot" style="background:#a78bfa"></span> FPL ep_next baseline
+                        <span class="legend-dot" style="background:#f5a623"></span> Default weights
                     </div>
                     <div id="bt-gw-chart"></div>
                 </div>
@@ -319,40 +349,6 @@
             </div>
         </div>
 
-        <!-- Players Table (shared) -->
-        <div class="table-section">
-            <h2>All Players</h2>
-            <div class="table-controls">
-                <input type="text" id="search" placeholder="Search by name or team...">
-                <button class="filter-btn active" data-pos="ALL">All</button>
-                <button class="filter-btn" data-pos="GKP">GKP</button>
-                <button class="filter-btn" data-pos="DEF">DEF</button>
-                <button class="filter-btn" data-pos="MID">MID</button>
-                <button class="filter-btn" data-pos="FWD">FWD</button>
-            </div>
-            <div style="overflow-x:auto">
-                <table class="players-table">
-                    <thead>
-                        <tr>
-                            <th onclick="sortTable('name')">Name</th>
-                            <th onclick="sortTable('team')">Team</th>
-                            <th onclick="sortTable('position')">Pos</th>
-                            <th onclick="sortTable('cost')">Cost</th>
-                            <th onclick="sortTable('predicted_points')">GW Pts</th>
-                            <th onclick="sortTable('start_likelihood')">Start %</th>
-                            <th onclick="sortTable('fixture_ease')">Fixture</th>
-                            <th onclick="sortTable('season_avg')">Season</th>
-                            <th onclick="sortTable('form_score')">Form</th>
-                            <th onclick="sortTable('xg_score')">xG/xGC</th>
-                            <th>Add</th>
-                        </tr>
-                    </thead>
-                    <tbody id="table-body">
-                        <tr><td colspan="11" class="loading"><span class="spinner"></span>Loading...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
 
     </div>
 

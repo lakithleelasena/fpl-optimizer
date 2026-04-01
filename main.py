@@ -89,6 +89,7 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "form_score": prediction["form_score"],
         "threat_score": prediction["threat_score"],
         "xgc_score": prediction["xgc_score"],
+        "ep_next": round(player.get("ep_next", 0.0), 2),
         "chance_of_playing": player.get("chance_of_playing"),
         "minutes": player["minutes"],
         "total_points": player["total_points"],
@@ -121,6 +122,7 @@ def _to_player_out(p: dict) -> PlayerOut:
         form_score=p.get("form_score", 0.0),
         threat_score=p.get("threat_score", 0.0),
         xgc_score=p.get("xgc_score", 0.0),
+        ep_next=p.get("ep_next", 0.0),
     )
 
 
@@ -145,6 +147,7 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         form_score=p.get("form_score", 0.0),
         threat_score=p.get("threat_score", 0.0),
         xgc_score=p.get("xgc_score", 0.0),
+        ep_next=p.get("ep_next", 0.0),
         is_starter=is_starter,
     )
 

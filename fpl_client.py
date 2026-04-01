@@ -161,7 +161,6 @@ async def fetch_all_data() -> dict:
                     "threat": float(h.get("threat") or 0),
                     "xgc": float(h.get("expected_goals_conceded") or 0),
                     "position": pos_lookup.get(player_id, "MID"),
-                    "ep_this": float(h.get("ep_this") or 0),  # FPL's own GW prediction
                 }
                 for h in history
             ]
@@ -205,6 +204,7 @@ async def fetch_all_data() -> dict:
             form = float(p.get("form") or 0)
             threat = float(p.get("threat") or 0)
             xgc = float(p.get("expected_goals_conceded") or 0)
+            ep_next = float(p.get("ep_next") or 0)
 
             players.append({
                 "id": pid,
@@ -226,6 +226,7 @@ async def fetch_all_data() -> dict:
                 "form": form,
                 "threat": threat,
                 "xgc": xgc,
+                "ep_next": ep_next,
                 "stats": stats,
             })
 
