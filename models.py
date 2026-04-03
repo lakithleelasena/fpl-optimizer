@@ -46,6 +46,8 @@ class OptimizeResponse(BaseModel):
     bench: List[SquadPlayer]
     total_cost: float
     total_predicted_points: float
+    captain_id: Optional[int] = None
+    vice_captain_id: Optional[int] = None
 
 
 # --- Transfer advice models ---

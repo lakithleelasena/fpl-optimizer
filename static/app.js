@@ -115,7 +115,7 @@ async function runOptimize() {
             throw new Error(err.detail || "Server error");
         }
         const data = await resp.json();
-        renderSquad(data);
+        renderSquad(data, data.captain_id, data.vice_captain_id);
 
         // Refresh player table with the same weights so scores match pitch cards
         try {

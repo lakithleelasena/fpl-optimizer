@@ -212,11 +212,23 @@ async def run_optimize(req: OptimizeRequest):
     starters.sort(key=lambda s: pos_order.get(s.position, 99))
     bench.sort(key=lambda s: pos_order.get(s.position, 99))
 
+    # Captain = highest predicted points among starters (exclude GKP)
+    # Vice-captain = second highest
+    eligible = sorted(
+        [s for s in starters if s.position != "GKP"],
+        key=lambda s: s.predicted_points,
+        reverse=True,
+    )
+    captain_id = eligible[0].id if len(eligible) > 0 else None
+    vice_captain_id = eligible[1].id if len(eligible) > 1 else None
+
     return OptimizeResponse(
         starters=starters,
         bench=bench,
         total_cost=round(total_cost, 1),
         total_predicted_points=round(total_predicted, 2),
+        captain_id=captain_id,
+        vice_captain_id=vice_captain_id,
     )
 
 
