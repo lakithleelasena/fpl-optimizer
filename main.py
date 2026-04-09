@@ -291,14 +291,16 @@ async def get_transfer_advice(req: TransferRequest):
 
 
 @app.get("/api/backtest")
-async def run_backtest():
+async def run_backtest(signals: Optional[str] = None):
     data = await fetch_all_data()
+    active_signals = [s.strip() for s in signals.split(",")] if signals else None
     try:
         result = await asyncio.to_thread(
             compute_backtest,
             data["raw_histories"],
             data["team_strengths"],
             data["next_gw"],
+            active_signals,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

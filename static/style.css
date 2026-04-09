@@ -273,6 +273,44 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 .chip-check:hover { border-color: #00ff87; }
 .chip-check input { accent-color: #00ff87; cursor: pointer; }
 
+/* ─── Signal selector (backtest) ───────────────────────────────────────────── */
+
+.signal-selector {
+    margin-bottom: 1rem;
+}
+
+.signal-selector-label {
+    display: block;
+    font-size: 0.85rem;
+    color: #8b949e;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.signal-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.signal-check {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.signal-check:hover { border-color: #00ff87; }
+.signal-check input { accent-color: #00ff87; cursor: pointer; }
+.signal-check small { color: #8b949e; }
+.signal-check input:checked ~ * { color: #e0e0e0; }
+
 /* ─── Summary ──────────────────────────────────────────────────────────────── */
 
 .summary {

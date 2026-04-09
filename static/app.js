@@ -533,14 +533,26 @@ function sortTable(key) {
 
 let bestWeightsFound = null;
 
+function getSelectedSignals() {
+    return Array.from($$(".signal-check input:checked")).map(el => el.value);
+}
+
 async function runBacktest() {
     const btn = $("#btn-backtest");
     btn.disabled = true;
     btn.textContent = "Running… (may take 5–15s)";
     $("#backtest-results").classList.add("hidden");
 
+    const signals = getSelectedSignals();
+    if (signals.length === 0) {
+        alert("Please select at least one signal.");
+        btn.disabled = false;
+        btn.textContent = "Run Backtest";
+        return;
+    }
+
     try {
-        const resp = await fetch("/api/backtest");
+        const resp = await fetch(`/api/backtest?signals=${signals.join(",")}`);
         if (!resp.ok) {
             const err = await resp.json();
             throw new Error(err.detail || "Server error");
@@ -636,17 +648,32 @@ function renderBacktest(data) {
 function applyBestWeights() {
     if (!bestWeightsFound) return;
     const b = bestWeightsFound;
+    const selectedSignals = getSelectedSignals();
+
     const setSlider = (id, val) => {
         const el = $(`#${id}`);
         if (el) { el.value = val; el.dispatchEvent(new Event("input")); }
     };
-    setSlider("w-home-away", b.w_home_away);
-    setSlider("w-season",    b.w_season);
-    setSlider("w-xgi",       b.w_xgi);
-    setSlider("w-fixture",   b.w_fixture);
-    setSlider("w-form",      b.w_form);
-    setSlider("w-threat",    b.w_threat);
-    setSlider("w-xgc",       b.w_xgc);
+
+    // Signal → slider id mapping
+    const signalToSlider = {
+        home_away: "w-home-away",
+        season:    "w-season",
+        xgi:       "w-xgi",
+        fixture:   "w-fixture",
+        form:      "w-form",
+        threat:    "w-threat",
+        xgc:       "w-xgc",
+    };
+
+    // Apply best weight if signal was selected, otherwise zero it out
+    setSlider("w-home-away", selectedSignals.includes("home_away") ? b.w_home_away : 0);
+    setSlider("w-season",    selectedSignals.includes("season")    ? b.w_season    : 0);
+    setSlider("w-xgi",       selectedSignals.includes("xgi")       ? b.w_xgi       : 0);
+    setSlider("w-fixture",   selectedSignals.includes("fixture")   ? b.w_fixture   : 0);
+    setSlider("w-form",      selectedSignals.includes("form")      ? b.w_form      : 0);
+    setSlider("w-threat",    selectedSignals.includes("threat")    ? b.w_threat    : 0);
+    setSlider("w-xgc",       selectedSignals.includes("xgc")       ? b.w_xgc       : 0);
 
     // Switch to optimizer tab
     $$(".tab-btn").forEach(btn => btn.classList.remove("active"));

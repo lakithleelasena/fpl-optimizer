@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.4</p>
+        <p class="version">v3.5</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -266,6 +266,18 @@
                     Tests all 7-weight combinations (0.0–1.0 in 0.1 steps, normalised to sum=1) across every completed
                     gameweek using only data available before each week. Lower MAE = better prediction accuracy.
                 </p>
+                <div class="signal-selector">
+                    <label class="signal-selector-label">Signals to include:</label>
+                    <div class="signal-checks">
+                        <label class="signal-check"><input type="checkbox" value="home_away" checked> Home/Away</label>
+                        <label class="signal-check"><input type="checkbox" value="season" checked> Season Avg</label>
+                        <label class="signal-check"><input type="checkbox" value="xgi" checked> xG Involvement <small>(MID/FWD)</small></label>
+                        <label class="signal-check"><input type="checkbox" value="fixture" checked> Fixture Difficulty</label>
+                        <label class="signal-check"><input type="checkbox" value="form" checked> Form</label>
+                        <label class="signal-check"><input type="checkbox" value="threat" checked> ICT Threat <small>(MID/FWD)</small></label>
+                        <label class="signal-check"><input type="checkbox" value="xgc" checked> xGC Clean Sheet <small>(GKP/DEF)</small></label>
+                    </div>
+                </div>
                 <button class="btn-optimize" id="btn-backtest" style="max-width:220px">Run Backtest</button>
             </div>
 
