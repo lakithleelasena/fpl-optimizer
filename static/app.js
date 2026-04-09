@@ -414,13 +414,14 @@ function renderAdvicePitch(data) {
     $("#advice-pitch-starters").innerHTML = html;
     $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false)).join("");
 
-    // Compute and display XI totals
+    // Compute and display XI totals (match the values shown on cards)
     const starters = data.starters || [];
+    // Cards show gw_pts[0] when show3gw=false, so use that for Next GW total
+    const totalNextGw = starters.reduce((sum, p) => sum + ((p.gw_pts && p.gw_pts[0]) || p.predicted_points || 0), 0);
     const total3gw = starters.reduce((sum, p) => sum + (p.predicted_points || 0), 0);
-    const totalNextGw = starters.reduce((sum, p) => sum + (p.ep_next || 0), 0);
-    // Captain doubles next GW ep_next
+    // Captain doubles their next GW points
     const captain = starters.find((p) => p.id === data.captain_id);
-    const captainBonus = captain ? (captain.ep_next || 0) : 0;
+    const captainBonus = captain ? ((captain.gw_pts && captain.gw_pts[0]) || captain.predicted_points || 0) : 0;
 
     const totalsEl = $("#advice-xi-totals");
     if (totalsEl) {
