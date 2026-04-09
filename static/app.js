@@ -413,6 +413,21 @@ function renderAdvicePitch(data) {
     }
     $("#advice-pitch-starters").innerHTML = html;
     $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false)).join("");
+
+    // Compute and display XI totals
+    const starters = data.starters || [];
+    const total3gw = starters.reduce((sum, p) => sum + (p.predicted_points || 0), 0);
+    const totalNextGw = starters.reduce((sum, p) => sum + (p.ep_next || 0), 0);
+    // Captain doubles next GW ep_next
+    const captain = starters.find((p) => p.id === data.captain_id);
+    const captainBonus = captain ? (captain.ep_next || 0) : 0;
+
+    const totalsEl = $("#advice-xi-totals");
+    if (totalsEl) {
+        totalsEl.style.display = "flex";
+        $("#advice-total-next-gw").textContent = `${(totalNextGw + captainBonus).toFixed(1)} pts`;
+        $("#advice-total-3gw").textContent = `${total3gw.toFixed(1)} pts`;
+    }
 }
 
 // ─── Shared rendering helpers ─────────────────────────────────────────────────
