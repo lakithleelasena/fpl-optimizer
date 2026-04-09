@@ -13,7 +13,7 @@ let mySquad = { GKP: [], DEF: [], MID: [], FWD: [] };
 
 document.addEventListener("DOMContentLoaded", () => {
     // Weight slider sync
-    ["home-away", "season", "xg", "fixture"].forEach((w) => {
+    ["home-away", "season", "xgi", "fixture", "form", "threat", "xgc"].forEach((w) => {
         const slider = $(`#w-${w}`);
         const display = $(`#w-${w}-val`);
         slider.addEventListener("input", () => { display.textContent = slider.value; });
@@ -97,8 +97,11 @@ async function runOptimize() {
         budget: parseInt($("#budget").value) || 1000,
         w_home_away: parseFloat($("#w-home-away").value),
         w_season: parseFloat($("#w-season").value),
-        w_xg: parseFloat($("#w-xg").value),
+        w_xgi: parseFloat($("#w-xgi").value),
         w_fixture: parseFloat($("#w-fixture").value),
+        w_form: parseFloat($("#w-form").value),
+        w_threat: parseFloat($("#w-threat").value),
+        w_xgc: parseFloat($("#w-xgc").value),
     };
 
     try {
@@ -112,12 +115,12 @@ async function runOptimize() {
             throw new Error(err.detail || "Server error");
         }
         const data = await resp.json();
-        renderSquad(data);
+        renderSquad(data, data.captain_id, data.vice_captain_id);
 
         // Refresh player table with the same weights so scores match pitch cards
         try {
             const playersResp = await fetch(
-                `/api/players?w_home_away=${body.w_home_away}&w_season=${body.w_season}&w_xg=${body.w_xg}&w_fixture=${body.w_fixture}`
+                `/api/players?w_home_away=${body.w_home_away}&w_season=${body.w_season}&w_xgi=${body.w_xgi}&w_fixture=${body.w_fixture}&w_form=${body.w_form}&w_threat=${body.w_threat}&w_xgc=${body.w_xgc}`
             );
             if (!playersResp.ok) throw new Error(`HTTP ${playersResp.status}`);
             allPlayers = await playersResp.json();
@@ -458,11 +461,12 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false) 
             <div class="player-cost">£${p.cost.toFixed(1)}m</div>
             <div class="start-likelihood" style="color:${slColor}">${slPct}% start</div>
             <div class="breakdown">
-                <span>H/A:${p.home_away_score.toFixed(1)}</span>
                 <span>S:${p.season_avg.toFixed(1)}</span>
+                <span>F:${p.form_score.toFixed(1)}</span>
                 <span>xG:${p.xg_score.toFixed(1)}</span>
                 <span style="color:${fixtureColor(p.fixture_ease)}">FD:${fixtureLabel(p.fixture_ease)}</span>
             </div>
+            ${p.ep_next > 0 ? `<div class="ep-next-label">FPL: ${p.ep_next.toFixed(1)} ep</div>` : ''}
         </div>`;
 }
 
@@ -501,8 +505,9 @@ function renderTable() {
             <td style="color:#00ff87;font-weight:600">${p.predicted_points.toFixed(1)}</td>
             <td style="color:${slColor}">${slPct}%</td>
             <td style="color:${fixtureColor(p.fixture_ease)}">${fixtureLabel(p.fixture_ease)}</td>
-            <td>${p.home_away_score.toFixed(1)}</td>
+            <td style="color:#a78bfa;font-weight:600">${p.ep_next != null ? p.ep_next.toFixed(1) : '-'}</td>
             <td>${p.season_avg.toFixed(1)}</td>
+            <td>${p.form_score.toFixed(1)}</td>
             <td>${p.xg_score.toFixed(1)}</td>
             <td>
                 <button class="add-btn ${addDisabled ? "add-btn-disabled" : ""}"
@@ -528,14 +533,26 @@ function sortTable(key) {
 
 let bestWeightsFound = null;
 
+function getSelectedSignals() {
+    return Array.from($$(".signal-check input:checked")).map(el => el.value);
+}
+
 async function runBacktest() {
     const btn = $("#btn-backtest");
     btn.disabled = true;
     btn.textContent = "Running… (may take 5–15s)";
     $("#backtest-results").classList.add("hidden");
 
+    const signals = getSelectedSignals();
+    if (signals.length === 0) {
+        alert("Please select at least one signal.");
+        btn.disabled = false;
+        btn.textContent = "Run Backtest";
+        return;
+    }
+
     try {
-        const resp = await fetch("/api/backtest");
+        const resp = await fetch(`/api/backtest?signals=${signals.join(",")}`);
         if (!resp.ok) {
             const err = await resp.json();
             throw new Error(err.detail || "Server error");
@@ -568,10 +585,13 @@ function renderBacktest(data) {
     const b = data.best;
     $("#bt-best-weights").innerHTML = `
         <div class="best-weights-row">
-            <div class="bw-chip"><span class="bw-label">H/A</span><span class="bw-val">${b.w_home_away.toFixed(1)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Season Avg</span><span class="bw-val">${b.w_season.toFixed(1)}</span></div>
-            <div class="bw-chip"><span class="bw-label">xG</span><span class="bw-val">${b.w_xg.toFixed(1)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Fixture</span><span class="bw-val">${b.w_fixture.toFixed(1)}</span></div>
+            <div class="bw-chip"><span class="bw-label">H/A</span><span class="bw-val">${b.w_home_away.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">Season Avg</span><span class="bw-val">${b.w_season.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">xGI</span><span class="bw-val">${b.w_xgi.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">Fixture</span><span class="bw-val">${b.w_fixture.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">Form</span><span class="bw-val">${b.w_form.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">Threat</span><span class="bw-val">${b.w_threat.toFixed(2)}</span></div>
+            <div class="bw-chip"><span class="bw-label">xGC</span><span class="bw-val">${b.w_xgc.toFixed(2)}</span></div>
             <div class="bw-chip bw-mae"><span class="bw-label">MAE</span><span class="bw-val">${b.mae.toFixed(4)}</span></div>
         </div>`;
 
@@ -579,7 +599,7 @@ function renderBacktest(data) {
     $("#bt-gw-chart").innerHTML = lineChart(
         [
             { label: "Best weights", color: "#00ff87", data: data.per_gw_best },
-            { label: "Default weights (0.1/0.2/0.1/0.6)", color: "#f5a623", data: data.per_gw_default },
+            { label: "Default weights", color: "#f5a623", data: data.per_gw_default },
         ],
         data.gameweeks
     );
@@ -589,25 +609,34 @@ function renderBacktest(data) {
     $("#bt-sensitivity").innerHTML = [
         sensitivityChart(sens.w_home_away, "Home/Away Weight"),
         sensitivityChart(sens.w_season,    "Season Avg Weight"),
-        sensitivityChart(sens.w_xg,        "xG Involvement Weight"),
+        sensitivityChart(sens.w_xgi,       "xG Involvement Weight"),
         sensitivityChart(sens.w_fixture,   "Fixture Difficulty Weight"),
+        sensitivityChart(sens.w_form,      "Form Weight"),
+        sensitivityChart(sens.w_threat,    "ICT Threat Weight"),
+        sensitivityChart(sens.w_xgc,       "xGC (Clean Sheet) Weight"),
     ].join("");
 
     // Top combos table
-    const defaultW = [0.1, 0.2, 0.1, 0.6];
+    const defaultW = [0.05, 0.20, 0.10, 0.35, 0.10, 0.10, 0.20];
     $("#bt-combos-body").innerHTML = data.top_combinations.map((c, i) => {
         const isDefault = Math.abs(c.w_home_away - defaultW[0]) < 0.01 &&
                           Math.abs(c.w_season     - defaultW[1]) < 0.01 &&
-                          Math.abs(c.w_xg         - defaultW[2]) < 0.01 &&
-                          Math.abs(c.w_fixture    - defaultW[3]) < 0.01;
+                          Math.abs(c.w_xgi        - defaultW[2]) < 0.01 &&
+                          Math.abs(c.w_fixture    - defaultW[3]) < 0.01 &&
+                          Math.abs(c.w_form       - defaultW[4]) < 0.01 &&
+                          Math.abs(c.w_threat     - defaultW[5]) < 0.01 &&
+                          Math.abs(c.w_xgc        - defaultW[6]) < 0.01;
         const isBest = i === 0;
         const cls = isBest ? "row-best" : isDefault ? "row-default" : "";
         return `<tr class="${cls}">
             <td>${i + 1}${isBest ? " 🏆" : isDefault ? " (default)" : ""}</td>
-            <td>${c.w_home_away.toFixed(1)}</td>
-            <td>${c.w_season.toFixed(1)}</td>
-            <td>${c.w_xg.toFixed(1)}</td>
-            <td>${c.w_fixture.toFixed(1)}</td>
+            <td>${c.w_home_away.toFixed(2)}</td>
+            <td>${c.w_season.toFixed(2)}</td>
+            <td>${c.w_xgi.toFixed(2)}</td>
+            <td>${c.w_fixture.toFixed(2)}</td>
+            <td>${c.w_form.toFixed(2)}</td>
+            <td>${c.w_threat.toFixed(2)}</td>
+            <td>${c.w_xgc.toFixed(2)}</td>
             <td style="color:#00ff87;font-weight:700">${c.mae.toFixed(4)}</td>
         </tr>`;
     }).join("");
@@ -619,14 +648,32 @@ function renderBacktest(data) {
 function applyBestWeights() {
     if (!bestWeightsFound) return;
     const b = bestWeightsFound;
+    const selectedSignals = getSelectedSignals();
+
     const setSlider = (id, val) => {
         const el = $(`#${id}`);
         if (el) { el.value = val; el.dispatchEvent(new Event("input")); }
     };
-    setSlider("w-home-away", b.w_home_away);
-    setSlider("w-season",    b.w_season);
-    setSlider("w-xg",        b.w_xg);
-    setSlider("w-fixture",   b.w_fixture);
+
+    // Signal → slider id mapping
+    const signalToSlider = {
+        home_away: "w-home-away",
+        season:    "w-season",
+        xgi:       "w-xgi",
+        fixture:   "w-fixture",
+        form:      "w-form",
+        threat:    "w-threat",
+        xgc:       "w-xgc",
+    };
+
+    // Apply best weight if signal was selected, otherwise zero it out
+    setSlider("w-home-away", selectedSignals.includes("home_away") ? b.w_home_away : 0);
+    setSlider("w-season",    selectedSignals.includes("season")    ? b.w_season    : 0);
+    setSlider("w-xgi",       selectedSignals.includes("xgi")       ? b.w_xgi       : 0);
+    setSlider("w-fixture",   selectedSignals.includes("fixture")   ? b.w_fixture   : 0);
+    setSlider("w-form",      selectedSignals.includes("form")      ? b.w_form      : 0);
+    setSlider("w-threat",    selectedSignals.includes("threat")    ? b.w_threat    : 0);
+    setSlider("w-xgc",       selectedSignals.includes("xgc")       ? b.w_xgc       : 0);
 
     // Switch to optimizer tab
     $$(".tab-btn").forEach(btn => btn.classList.remove("active"));
