@@ -291,7 +291,8 @@ async def get_transfer_advice(req: TransferRequest):
 
 
 @app.get("/api/backtest")
-async def run_backtest(signals: Optional[str] = None):
+async def run_backtest(request: Request):
+    signals = request.query_params.get("signals")
     data = await fetch_all_data()
     active_signals = [s.strip() for s in signals.split(",")] if signals else None
     try:
