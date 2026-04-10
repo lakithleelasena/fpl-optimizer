@@ -188,6 +188,15 @@ async def run_optimize(req: OptimizeRequest):
         pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
         out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
+
+        # Build per-GW breakdown using the same 7-signal per-match score so
+        # card values are consistent with the transfer advice tab.
+        # LP objective stays GW1 only (predicted_points from _build_player_out).
+        per_match = pred["predicted_points"]  # per-fixture score from predictor
+        out["gw_pts"] = [
+            round(per_match * len(p.get("gw_fixtures", {}).get(gw_id, [])), 2)
+            for gw_id in data["upcoming_gws"]
+        ]
         enriched.append(out)
 
     result = optimize_squad(enriched, budget=req.budget)
@@ -239,13 +248,23 @@ async def get_transfer_advice(req: TransferRequest):
 
     data = await fetch_all_data()
 
-    # Build enriched players with raw cost for optimizer (3GW predictions for transfer/chip logic)
+    # Build enriched players using the same 7-signal per-match score as the optimizer
+    # so card values are identical between tabs.  LP objective = 3GW total.
     enriched = []
     for p in data["players"]:
-        pred = predict_points(p, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
-        out = _build_player_out(p, pred)
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+        out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
-        out["gw_pts"] = _player_gw_pts(out, data["upcoming_gws"])
+
+        # Per-GW breakdown: same 7-signal per-match score × fixtures per GW
+        per_match = pred["predicted_points"]
+        gw_pts = [
+            round(per_match * len(p.get("gw_fixtures", {}).get(gw_id, [])), 2)
+            for gw_id in data["upcoming_gws"]
+        ]
+        out["gw_pts"] = gw_pts
+        out["predicted_points"] = round(sum(gw_pts), 2)  # 3GW total → LP objective
         enriched.append(out)
 
     result = recommend_transfers(

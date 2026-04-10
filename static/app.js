@@ -413,6 +413,23 @@ function renderAdvicePitch(data) {
     }
     $("#advice-pitch-starters").innerHTML = html;
     $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false)).join("");
+
+    // Compute and display XI totals — starters only, never bench
+    const starters = data.starters || [];
+    // Cards show gw_pts[0] (Next GW), use that for the GW1 total
+    const totalNextGw = starters.reduce((sum, p) => sum + (p.gw_pts ? p.gw_pts[0] : 0), 0);
+    // 3GW total uses predicted_points (which equals sum of gw_pts across 3 GWs)
+    const total3gw = starters.reduce((sum, p) => sum + (p.predicted_points || 0), 0);
+    // Captain's GW1 pts counted again (2× in FPL); strictly use gw_pts[0], never the 3GW total
+    const captain = starters.find((p) => p.id === data.captain_id);
+    const captainBonus = (captain && captain.gw_pts) ? captain.gw_pts[0] : 0;
+
+    const totalsEl = $("#advice-xi-totals");
+    if (totalsEl) {
+        totalsEl.style.display = "flex";
+        $("#advice-total-next-gw").textContent = `${(totalNextGw + captainBonus).toFixed(1)} pts`;
+        $("#advice-total-3gw").textContent = `${total3gw.toFixed(1)} pts`;
+    }
 }
 
 // ─── Shared rendering helpers ─────────────────────────────────────────────────

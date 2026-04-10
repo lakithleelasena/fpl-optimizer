@@ -13,8 +13,14 @@ def optimize_squad(players: list[dict], budget: int = 1000) -> dict:
     x = [pulp.LpVariable(f"squad_{i}", cat="Binary") for i in range(n)]
     y = [pulp.LpVariable(f"start_{i}", cat="Binary") for i in range(n)]
 
-    # Objective: maximize predicted points of starters
-    prob += pulp.lpSum(y[i] * players[i]["predicted_points"] for i in range(n))
+    # Objective: maximize predicted points of starters (primary),
+    # with a tiny secondary term to prefer higher-quality bench and
+    # encourage spending up to the budget limit.
+    epsilon = 0.001
+    prob += (
+        pulp.lpSum(y[i] * players[i]["predicted_points"] for i in range(n))
+        + epsilon * pulp.lpSum(x[i] * players[i]["predicted_points"] for i in range(n))
+    )
 
     # Squad size = 15
     prob += pulp.lpSum(x[i] for i in range(n)) == SQUAD_SIZE
