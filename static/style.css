@@ -750,6 +750,47 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 .row-best td { background: #00ff8711 !important; }
 .row-default td { background: #f5a62311 !important; }
 
+/* ─── XI Totals bar ───────────────────────────────────────────────────────── */
+
+.xi-totals {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 0.6rem 1.5rem;
+    margin: 0.5rem auto 1rem;
+    width: fit-content;
+}
+
+.xi-total-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+}
+
+.xi-total-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8b949e;
+}
+
+.xi-total-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #00ff87;
+}
+
+.xi-total-divider {
+    width: 1px;
+    height: 2rem;
+    background: #30363d;
+}
+
 /* ─── Responsive ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
