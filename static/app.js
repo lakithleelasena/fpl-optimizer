@@ -308,6 +308,7 @@ async function runTransferAdvice() {
         free_transfers: parseInt($("#free-transfers").value),
         budget_in_bank: bankValue,
         chips_available: chips,
+        n_gw: parseInt($("#n-gw-transfer").value) || 3,
     };
 
     try {
@@ -331,6 +332,8 @@ async function runTransferAdvice() {
 }
 
 function renderTransferAdvice(data) {
+    const nGw = data.n_gw || 3;
+
     // Summary
     $("#ts-transfers").textContent = data.transfers.length;
     const hitsEl = $("#ts-hits");
@@ -342,12 +345,14 @@ function renderTransferAdvice(data) {
     gainEl.style.color = data.net_points_gain >= 0 ? "#00ff87" : "#ff6b6b";
 
     $("#ts-total-3gw").textContent = data.total_predicted_3gw.toFixed(1);
+    const summaryLabel = $("#ts-3gw-label");
+    if (summaryLabel) summaryLabel.textContent = `${nGw}GW Predicted Pts (XI)`;
 
     // Chip recommendation
     renderChipRec(data.chip_recommendation);
 
     // Transfer suggestions
-    renderTransfers(data.transfers, data.free_transfers);
+    renderTransfers(data.transfers, data.free_transfers, nGw);
 
     // Recommended XI (pitch)
     renderAdvicePitch(data);
@@ -383,12 +388,13 @@ function renderChipRec(rec) {
     $("#chip-rec-content").innerHTML = html;
 }
 
-function renderTransfers(transfers, freeTransfers) {
+function renderTransfers(transfers, freeTransfers, nGw = 3) {
     if (transfers.length === 0) {
         $("#transfers-content").innerHTML = `<p class="no-transfers">No beneficial transfers found this gameweek. Hold your transfers.</p>`;
         return;
     }
 
+    const gwLabel = `${nGw}GW pts`;
     let freeLeft = freeTransfers;
     const html = transfers.map((t) => {
         const isHit = freeLeft <= 0;
@@ -401,13 +407,13 @@ function renderTransfers(transfers, freeTransfers) {
                     <div class="transfer-out">
                         <div class="t-label">OUT</div>
                         <div class="t-name">${t.transfer_out.name}</div>
-                        <div class="t-meta">${t.transfer_out.team} · £${t.transfer_out.cost.toFixed(1)}m · ${t.transfer_out.predicted_points.toFixed(1)} 3GW pts</div>
+                        <div class="t-meta">${t.transfer_out.team} · £${t.transfer_out.cost.toFixed(1)}m · ${t.transfer_out.predicted_points.toFixed(1)} ${gwLabel}</div>
                     </div>
                     <div class="transfer-arrow">→</div>
                     <div class="transfer-in">
                         <div class="t-label">IN</div>
                         <div class="t-name">${t.transfer_in.name}</div>
-                        <div class="t-meta">${t.transfer_in.team} · £${t.transfer_in.cost.toFixed(1)}m · ${t.transfer_in.predicted_points.toFixed(1)} 3GW pts</div>
+                        <div class="t-meta">${t.transfer_in.team} · £${t.transfer_in.cost.toFixed(1)}m · ${t.transfer_in.predicted_points.toFixed(1)} ${gwLabel}</div>
                     </div>
                     <div class="transfer-gain">
                         <div class="t-gain-val">+${t.points_gain.toFixed(1)}</div>
@@ -421,6 +427,9 @@ function renderTransfers(transfers, freeTransfers) {
 }
 
 function renderAdvicePitch(data) {
+    const nGw = data.n_gw || 1;
+    const gwNums = data.upcoming_gws || [];
+
     const groups = { GKP: [], DEF: [], MID: [], FWD: [] };
     data.starters.forEach((p) => groups[p.position].push(p));
 
@@ -428,26 +437,29 @@ function renderAdvicePitch(data) {
     for (const [pos, players] of Object.entries(groups)) {
         if (players.length === 0) continue;
         html += `<div class="position-row"><div class="position-row-label">${pos}</div>`;
-        html += players.map((p) => cardHTML(p, p.id === data.captain_id, p.id === data.vice_captain_id, false)).join("");
+        html += players.map((p) => cardHTML(p, p.id === data.captain_id, p.id === data.vice_captain_id, false, nGw, gwNums)).join("");
         html += `</div>`;
     }
     $("#advice-pitch-starters").innerHTML = html;
-    $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false)).join("");
+    $("#advice-pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false, nGw, gwNums)).join("");
 
-    // Compute and display XI totals (match the values shown on cards)
+    // Compute and display XI totals
     const starters = data.starters || [];
-    // Cards show gw_pts[0] when show3gw=false, so use that for Next GW total
-    const totalNextGw = starters.reduce((sum, p) => sum + ((p.gw_pts && p.gw_pts[0]) || p.predicted_points || 0), 0);
-    const total3gw = starters.reduce((sum, p) => sum + (p.predicted_points || 0), 0);
+    // Next GW total: always uses gw_pts[0] (first upcoming GW)
+    const totalNextGw = starters.reduce((sum, p) => sum + ((p.gw_pts && p.gw_pts[0]) || 0), 0);
+    // nGW total: sum of predicted_points (which equals sum(gw_pts[:n_gw]))
+    const totalNGw = starters.reduce((sum, p) => sum + (p.predicted_points || 0), 0);
     // Captain doubles their next GW points
     const captain = starters.find((p) => p.id === data.captain_id);
-    const captainBonus = captain ? ((captain.gw_pts && captain.gw_pts[0]) || captain.predicted_points || 0) : 0;
+    const captainBonus = captain ? ((captain.gw_pts && captain.gw_pts[0]) || 0) : 0;
 
     const totalsEl = $("#advice-xi-totals");
     if (totalsEl) {
         totalsEl.style.display = "flex";
         $("#advice-total-next-gw").textContent = `${(totalNextGw + captainBonus).toFixed(1)} pts`;
-        $("#advice-total-3gw").textContent = `${total3gw.toFixed(1)} pts`;
+        $("#advice-total-3gw").textContent = `${totalNGw.toFixed(1)} pts`;
+        const nGwLabel = $("#advice-ngw-label");
+        if (nGwLabel) nGwLabel.textContent = `${nGw} GW Total`;
     }
 }
 

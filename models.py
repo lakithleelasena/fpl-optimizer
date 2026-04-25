@@ -61,6 +61,7 @@ class TransferRequest(BaseModel):
     free_transfers: int = 1
     budget_in_bank: int = 0          # tenths of £ (e.g. 5 = £0.5m)
     chips_available: List[str] = []  # "wildcard", "free_hit", "bench_boost", "triple_captain"
+    n_gw: int = 3                    # number of gameweeks to optimise transfers over (1–4)
     w_home_away: float = 0.05
     w_season: float = 0.20
     w_xgi: float = 0.10
@@ -91,4 +92,6 @@ class TransferAdviceResponse(BaseModel):
     net_points_gain: float
     captain_id: Optional[int] = None
     vice_captain_id: Optional[int] = None
-    total_predicted_3gw: float = 0.0  # sum of starters' 3GW predicted points
+    total_predicted_3gw: float = 0.0  # sum of starters' nGW predicted points
+    n_gw: int = 3                      # number of GWs optimised for
+    upcoming_gws: List[int] = []       # actual GW numbers e.g. [35, 36, 37]

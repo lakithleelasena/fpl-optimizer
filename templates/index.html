@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.6</p>
+        <p class="version">v3.7</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -163,6 +163,15 @@
                         <input type="number" id="bank" value="0.0" min="0" max="20" step="0.1">
                     </div>
                     <div class="control-group">
+                        <label>Optimise transfers over</label>
+                        <select id="n-gw-transfer" class="gw-select">
+                            <option value="1">Next 1 Gameweek</option>
+                            <option value="2">Next 2 Gameweeks</option>
+                            <option value="3" selected>Next 3 Gameweeks</option>
+                            <option value="4">Next 4 Gameweeks</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
                         <label>Chips Available</label>
                         <div class="chips-grid">
                             <label class="chip-check"><input type="checkbox" value="wildcard"> Wildcard</label>
@@ -196,7 +205,7 @@
                     </div>
                     <div class="summary-card">
                         <div class="value" id="ts-total-3gw">-</div>
-                        <div class="label">3GW Predicted Pts (XI)</div>
+                        <div class="label" id="ts-3gw-label">3GW Predicted Pts (XI)</div>
                     </div>
                 </div>
 
@@ -222,7 +231,7 @@
                         </div>
                         <div class="xi-total-divider"></div>
                         <div class="xi-total-item">
-                            <span class="xi-total-label">3 GW Total</span>
+                            <span class="xi-total-label" id="advice-ngw-label">3 GW Total</span>
                             <span class="xi-total-value" id="advice-total-3gw">—</span>
                         </div>
                     </div>

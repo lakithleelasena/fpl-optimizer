@@ -282,7 +282,7 @@ async def get_transfer_advice(req: TransferRequest):
             n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
             gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
         out["gw_pts"] = gw_pts
-        out["predicted_points"] = round(sum(gw_pts), 2)  # total → LP objective
+        out["predicted_points"] = round(sum(gw_pts[:req.n_gw]), 2)  # LP objective = n_gw total
         enriched.append(out)
 
     result = recommend_transfers(
@@ -292,6 +292,7 @@ async def get_transfer_advice(req: TransferRequest):
         budget_in_bank=req.budget_in_bank,
         chips_available=req.chips_available,
         upcoming_gws=data["upcoming_gws"],
+        n_gw=req.n_gw,
     )
 
     # Convert to response models (cost → display format)
@@ -324,6 +325,8 @@ async def get_transfer_advice(req: TransferRequest):
         captain_id=captain_id,
         vice_captain_id=vice_captain_id,
         total_predicted_3gw=total_predicted_3gw,
+        n_gw=req.n_gw,
+        upcoming_gws=data["upcoming_gws"][:req.n_gw],
     )
 
 
