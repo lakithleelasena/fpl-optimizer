@@ -44,13 +44,17 @@ async def index(request: Request):
 
 def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
     """Return a copy of player with opponents/strengths/n_fixtures restricted to GW1 only."""
-    gw1 = upcoming_gws[0] if upcoming_gws else None
-    if gw1 is None:
+    return _gwN_player(player, upcoming_gws[0] if upcoming_gws else None, team_strengths)
+
+
+def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
+    """Return a copy of player with fixture context set for a specific GW."""
+    if gw_id is None:
         return player
-    gw1_opps = player["gw_fixtures"].get(gw1, [])
-    gw1_strengths = [team_strengths.get(o, 0) for o in gw1_opps]
-    is_home = player.get("gw_home", {}).get(gw1, 0.5)
-    return {**player, "opponents": gw1_opps, "opponent_strengths": gw1_strengths, "n_fixtures": len(gw1_opps), "is_home": is_home}
+    opps = player["gw_fixtures"].get(gw_id, [])
+    strengths = [team_strengths.get(o, 0) for o in opps]
+    is_home = player.get("gw_home", {}).get(gw_id, 0.5)
+    return {**player, "opponents": opps, "opponent_strengths": strengths, "n_fixtures": len(opps), "is_home": is_home}
 
 
 def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
@@ -187,18 +191,21 @@ async def run_optimize(req: OptimizeRequest):
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
-        out = _build_player_out(p_gw1, pred)
+        pred_gw1 = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+        out = _build_player_out(p_gw1, pred_gw1)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
 
-        # Per-GW breakdown using 7-signal per-match score × fixtures per GW
-        per_match = pred["predicted_points"]
-        out["gw_pts"] = [
-            round(per_match * len(p.get("gw_fixtures", {}).get(gw_id, [])), 2)
-            for gw_id in data["upcoming_gws"]
-        ]
+        # Per-GW breakdown: run predict_points with each GW's own fixture context
+        # so home/away and fixture difficulty reflect the actual upcoming opponent
+        gw_pts = []
+        for gw_id in data["upcoming_gws"]:
+            p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
+            pred_gwN = predict_points(p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+            n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
+            gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
+        out["gw_pts"] = gw_pts
         # LP objective = sum of first n_gw GWs
-        out["predicted_points"] = round(sum(out["gw_pts"][:n_gw]), 2)
+        out["predicted_points"] = round(sum(gw_pts[:n_gw]), 2)
         enriched.append(out)
 
     result = optimize_squad(enriched, budget=req.budget)
@@ -258,23 +265,24 @@ async def get_transfer_advice(req: TransferRequest):
 
     data = await fetch_all_data()
 
-    # Build enriched players using the same 7-signal per-match score as the optimizer
-    # so card values are identical between tabs.  LP objective = 3GW total.
+    # Build enriched players with per-GW fixture context for accurate scores.
+    # LP objective = total across all upcoming GWs.
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
-        out = _build_player_out(p_gw1, pred)
+        pred_gw1 = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+        out = _build_player_out(p_gw1, pred_gw1)
         out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
 
-        # Per-GW breakdown: same 7-signal per-match score × fixtures per GW
-        per_match = pred["predicted_points"]
-        gw_pts = [
-            round(per_match * len(p.get("gw_fixtures", {}).get(gw_id, [])), 2)
-            for gw_id in data["upcoming_gws"]
-        ]
+        # Per-GW breakdown using each GW's own fixture context
+        gw_pts = []
+        for gw_id in data["upcoming_gws"]:
+            p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
+            pred_gwN = predict_points(p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+            n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
+            gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
         out["gw_pts"] = gw_pts
-        out["predicted_points"] = round(sum(gw_pts), 2)  # 3GW total → LP objective
+        out["predicted_points"] = round(sum(gw_pts), 2)  # total → LP objective
         enriched.append(out)
 
     result = recommend_transfers(

@@ -104,13 +104,13 @@ async def fetch_all_data() -> dict:
             for t in bootstrap["teams"]
         }
 
-        # Collect fixtures for next 3 gameweeks
+        # Collect fixtures for next 4 gameweeks
         sorted_events = sorted(bootstrap["events"], key=lambda e: e["id"])
         upcoming_gws: list[int] = []
         for event in sorted_events:
             if event["id"] >= next_gw and not event.get("finished", False):
                 upcoming_gws.append(event["id"])
-            if len(upcoming_gws) == 3:
+            if len(upcoming_gws) == 4:
                 break
 
         # Per-GW fixture map: {gw_id: {team_id: [opp_ids]}}
