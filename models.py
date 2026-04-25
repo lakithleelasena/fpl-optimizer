@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class OptimizeRequest(BaseModel):
     budget: int = 1000
+    n_gw: int = 1                      # number of gameweeks to optimise for (1–3)
     w_home_away: float = 0.05
     w_season: float = 0.20
     w_xgi: float = 0.10
@@ -48,6 +49,9 @@ class OptimizeResponse(BaseModel):
     total_predicted_points: float
     captain_id: Optional[int] = None
     vice_captain_id: Optional[int] = None
+    gw_totals: List[float] = []        # per-GW XI predicted pts [gw1, gw2, ...]
+    upcoming_gws: List[int] = []       # actual GW numbers e.g. [32, 33, 34]
+    n_gw: int = 1                      # number of GWs optimised for
 
 
 # --- Transfer advice models ---

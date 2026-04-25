@@ -182,6 +182,8 @@ async def get_players(
 async def run_optimize(req: OptimizeRequest):
     data = await fetch_all_data()
 
+    n_gw = max(1, min(req.n_gw, len(data["upcoming_gws"])))  # clamp 1–3
+
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
@@ -189,14 +191,14 @@ async def run_optimize(req: OptimizeRequest):
         out = _build_player_out(p_gw1, pred)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
 
-        # Build per-GW breakdown using the same 7-signal per-match score so
-        # card values are consistent with the transfer advice tab.
-        # LP objective stays GW1 only (predicted_points from _build_player_out).
-        per_match = pred["predicted_points"]  # per-fixture score from predictor
+        # Per-GW breakdown using 7-signal per-match score × fixtures per GW
+        per_match = pred["predicted_points"]
         out["gw_pts"] = [
             round(per_match * len(p.get("gw_fixtures", {}).get(gw_id, [])), 2)
             for gw_id in data["upcoming_gws"]
         ]
+        # LP objective = sum of first n_gw GWs
+        out["predicted_points"] = round(sum(out["gw_pts"][:n_gw]), 2)
         enriched.append(out)
 
     result = optimize_squad(enriched, budget=req.budget)
@@ -222,7 +224,6 @@ async def run_optimize(req: OptimizeRequest):
     bench.sort(key=lambda s: pos_order.get(s.position, 99))
 
     # Captain = highest predicted points among starters (exclude GKP)
-    # Vice-captain = second highest
     eligible = sorted(
         [s for s in starters if s.position != "GKP"],
         key=lambda s: s.predicted_points,
@@ -231,6 +232,12 @@ async def run_optimize(req: OptimizeRequest):
     captain_id = eligible[0].id if len(eligible) > 0 else None
     vice_captain_id = eligible[1].id if len(eligible) > 1 else None
 
+    # Per-GW XI totals for the summary banner
+    gw_totals = [
+        round(sum((s.gw_pts[i] if s.gw_pts and i < len(s.gw_pts) else 0) for s in starters), 2)
+        for i in range(n_gw)
+    ]
+
     return OptimizeResponse(
         starters=starters,
         bench=bench,
@@ -238,6 +245,9 @@ async def run_optimize(req: OptimizeRequest):
         total_predicted_points=round(total_predicted, 2),
         captain_id=captain_id,
         vice_captain_id=vice_captain_id,
+        gw_totals=gw_totals,
+        upcoming_gws=data["upcoming_gws"][:n_gw],
+        n_gw=n_gw,
     )
 
 

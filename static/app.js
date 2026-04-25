@@ -95,6 +95,7 @@ async function runOptimize() {
 
     const body = {
         budget: parseInt($("#budget").value) || 1000,
+        n_gw: parseInt($("#n-gw").value) || 1,
         w_home_away: parseFloat($("#w-home-away").value),
         w_season: parseFloat($("#w-season").value),
         w_xgi: parseFloat($("#w-xgi").value),
@@ -137,8 +138,27 @@ async function runOptimize() {
 }
 
 function renderSquad(data, captainId = null, viceCaptainId = null) {
+    const nGw = data.n_gw || 1;
+    const upcomingGws = data.upcoming_gws || [];
+
+    // Rebuild summary cards dynamically based on n_gw
+    const summaryEl = $("#optimizer-summary");
+    // Remove any previously added GW cards (keep Cost and Squad Size)
+    summaryEl.querySelectorAll(".summary-card-gw").forEach((el) => el.remove());
+
+    // Insert per-GW cards after Cost card (track insertion point to preserve order)
+    const costCard = summaryEl.querySelector(".summary-card");
+    let insertAfter = costCard;
+    upcomingGws.forEach((gw, i) => {
+        const pts = data.gw_totals && data.gw_totals[i] != null ? data.gw_totals[i].toFixed(1) : "-";
+        const card = document.createElement("div");
+        card.className = "summary-card summary-card-gw";
+        card.innerHTML = `<div class="value">${pts}</div><div class="label">GW${gw} XI Pts</div>`;
+        insertAfter.insertAdjacentElement("afterend", card);
+        insertAfter = card;
+    });
+
     $("#summary-cost").textContent = `£${data.total_cost.toFixed(1)}m`;
-    $("#summary-points").textContent = data.total_predicted_points.toFixed(1);
     $("#summary-count").textContent = `${data.starters.length + data.bench.length}`;
 
     const groups = { GKP: [], DEF: [], MID: [], FWD: [] };
@@ -148,11 +168,11 @@ function renderSquad(data, captainId = null, viceCaptainId = null) {
     for (const [pos, players] of Object.entries(groups)) {
         if (players.length === 0) continue;
         html += `<div class="position-row"><div class="position-row-label">${pos}</div>`;
-        html += players.map((p) => cardHTML(p, p.id === captainId, p.id === viceCaptainId)).join("");
+        html += players.map((p) => cardHTML(p, p.id === captainId, p.id === viceCaptainId, false, nGw, upcomingGws)).join("");
         html += `</div>`;
     }
     $("#pitch-starters").innerHTML = html;
-    $("#pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false)).join("");
+    $("#pitch-bench").innerHTML = data.bench.map((p) => cardHTML(p, false, false, false, nGw, upcomingGws)).join("");
 }
 
 // ─── My Team & Transfers tab ──────────────────────────────────────────────────
@@ -452,7 +472,7 @@ function fixtureLabel(ease) {
     return "Hard";
 }
 
-function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false) {
+function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false, numGw = 1, gwNums = []) {
     const slPct = Math.round(p.start_likelihood * 100);
     const slColor = startColor(p.start_likelihood);
     const badge = isCaptain
@@ -460,13 +480,31 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false) 
         : isViceCaptain
         ? `<div class="captain-badge vc-badge">V</div>`
         : "";
-    const displayPts = (!show3gw && p.gw_pts && p.gw_pts.length > 0)
-        ? p.gw_pts[0]
-        : p.predicted_points;
-    const ptsLabel = show3gw ? "3GW" : "GW";
-    const gwBreakdown = show3gw && p.gw_pts && p.gw_pts.length === 3
-        ? `<div class="gw-breakdown">GW1:${p.gw_pts[0].toFixed(1)} GW2:${p.gw_pts[1].toFixed(1)} GW3:${p.gw_pts[2].toFixed(1)}</div>`
-        : "";
+
+    // Determine display pts and label
+    let displayPts, ptsLabel;
+    if (show3gw) {
+        displayPts = p.predicted_points;
+        ptsLabel = "3GW";
+    } else if (numGw > 1 && p.gw_pts) {
+        displayPts = p.gw_pts.slice(0, numGw).reduce((s, v) => s + v, 0);
+        ptsLabel = `${numGw}GW`;
+    } else {
+        displayPts = (p.gw_pts && p.gw_pts.length > 0) ? p.gw_pts[0] : p.predicted_points;
+        ptsLabel = "GW";
+    }
+
+    // Per-GW breakdown row (shown when numGw > 1 or show3gw)
+    let gwBreakdown = "";
+    if ((numGw > 1 || show3gw) && p.gw_pts && p.gw_pts.length > 0) {
+        const count = show3gw ? p.gw_pts.length : numGw;
+        const parts = Array.from({ length: count }, (_, i) => {
+            const label = gwNums[i] ? `GW${gwNums[i]}` : `GW${i + 1}`;
+            const val = p.gw_pts[i] != null ? p.gw_pts[i].toFixed(1) : "0.0";
+            return `<span>${label}:${val}</span>`;
+        });
+        gwBreakdown = `<div class="gw-breakdown">${parts.join("")}</div>`;
+    }
     return `
         <div class="player-card pos-${p.position}" style="position:relative">
             ${badge}

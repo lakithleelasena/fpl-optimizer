@@ -67,6 +67,7 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
     margin-bottom: 0.3rem;
 }
 
+.gw-select,
 .control-group input[type="number"],
 .control-group input[type="range"],
 .select-input {
@@ -492,7 +493,21 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 .player-card .player-team { font-size: 0.7rem; color: #8b949e; }
 .player-card .player-pts { font-size: 1.1rem; font-weight: 700; color: #00ff87; margin: 0.3rem 0; }
 .pts-label { font-size: 0.55rem; color: #8b949e; margin-left: 2px; font-weight: 400; vertical-align: super; }
-.gw-breakdown { font-size: 0.6rem; color: #8b949e; margin: -0.1rem 0 0.2rem; letter-spacing: 0.01em; }
+.gw-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.2rem;
+    font-size: 0.6rem;
+    color: #8b949e;
+    margin: -0.1rem 0 0.2rem;
+    letter-spacing: 0.01em;
+}
+.gw-breakdown span {
+    background: #21262d;
+    border-radius: 3px;
+    padding: 1px 3px;
+}
 .player-card .player-cost { font-size: 0.7rem; color: #8b949e; }
 
 .player-card .start-likelihood {

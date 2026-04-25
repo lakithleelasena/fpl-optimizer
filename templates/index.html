@@ -32,6 +32,14 @@
                     <input type="number" id="budget" value="1000" min="500" max="2000" step="10">
                 </div>
                 <div class="control-group">
+                    <label>Optimise for</label>
+                    <select id="n-gw" class="gw-select">
+                        <option value="1" selected>Next 1 Gameweek</option>
+                        <option value="2">Next 2 Gameweeks</option>
+                        <option value="3">Next 3 Gameweeks</option>
+                    </select>
+                </div>
+                <div class="control-group">
                     <label>Home/Away Weight <span class="weight-value" id="w-home-away-val">0.05</span></label>
                     <input type="range" id="w-home-away" min="0" max="1" step="0.05" value="0.05">
                 </div>
@@ -64,14 +72,10 @@
                 </div>
             </div>
 
-            <div class="summary">
+            <div class="summary" id="optimizer-summary">
                 <div class="summary-card">
                     <div class="value" id="summary-cost">-</div>
                     <div class="label">Total Cost</div>
-                </div>
-                <div class="summary-card">
-                    <div class="value" id="summary-points">-</div>
-                    <div class="label">Next GW Predicted Pts (XI)</div>
                 </div>
                 <div class="summary-card">
                     <div class="value" id="summary-count">-</div>
