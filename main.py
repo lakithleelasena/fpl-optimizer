@@ -54,7 +54,8 @@ def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
     opps = player["gw_fixtures"].get(gw_id, [])
     strengths = [team_strengths.get(o, 0) for o in opps]
     is_home = player.get("gw_home", {}).get(gw_id, 0.5)
-    return {**player, "opponents": opps, "opponent_strengths": strengths, "n_fixtures": len(opps), "is_home": is_home}
+    fdr_ease = player.get("gw_ease", {}).get(gw_id)  # pre-computed FDR ease for this GW
+    return {**player, "opponents": opps, "opponent_strengths": strengths, "n_fixtures": len(opps), "is_home": is_home, "_gw_ease": fdr_ease}
 
 
 def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
@@ -346,3 +347,89 @@ async def run_backtest(request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return result
+
+
+@app.get("/api/teams")
+async def get_teams():
+    """Team overview + fixture tracker data for the next 8 GWs."""
+    data = await fetch_all_data()
+    bootstrap_teams = data["bootstrap_teams"]
+    fixtures = data["fixtures"]
+    next_gw = data["next_gw"]
+    teams_short = data.get("teams_short", {})
+
+    # Next 8 upcoming (non-finished) GWs
+    all_events = sorted(set(f["event"] for f in fixtures if f.get("event")))
+    tracker_gws = [gw for gw in all_events if gw >= next_gw][:8]
+
+    team_map = {t["id"]: t for t in bootstrap_teams}
+
+    # Goals for/against from finished fixtures
+    goals_for: dict[int, int] = {}
+    goals_against: dict[int, int] = {}
+    for fix in fixtures:
+        if fix.get("finished") and fix.get("team_h_score") is not None:
+            h, a = fix["team_h"], fix["team_a"]
+            hs, as_ = fix["team_h_score"], fix["team_a_score"]
+            goals_for[h] = goals_for.get(h, 0) + hs
+            goals_for[a] = goals_for.get(a, 0) + as_
+            goals_against[h] = goals_against.get(h, 0) + as_
+            goals_against[a] = goals_against.get(a, 0) + hs
+
+    # Per-team upcoming fixtures for the tracker GWs
+    # {team_id: {gw_id: [{opp_id, opp_short, is_home, fdr}]}}
+    team_fixtures: dict[int, dict[int, list[dict]]] = {t["id"]: {} for t in bootstrap_teams}
+    for fix in fixtures:
+        gw = fix.get("event")
+        if gw not in tracker_gws:
+            continue
+        h, a = fix["team_h"], fix["team_a"]
+        h_fdr = fix.get("team_h_difficulty", 3)
+        a_fdr = fix.get("team_a_difficulty", 3)
+        team_fixtures[h].setdefault(gw, []).append({
+            "opp_id": a,
+            "opp_short": teams_short.get(a, "?"),
+            "is_home": True,
+            "fdr": h_fdr,
+        })
+        team_fixtures[a].setdefault(gw, []).append({
+            "opp_id": h,
+            "opp_short": teams_short.get(h, "?"),
+            "is_home": False,
+            "fdr": a_fdr,
+        })
+
+    result = []
+    for t in bootstrap_teams:
+        tid = t["id"]
+        gf = goals_for.get(tid, 0)
+        ga = goals_against.get(tid, 0)
+        upcoming = []
+        for gw in tracker_gws:
+            matches = team_fixtures[tid].get(gw, [])
+            if matches:
+                upcoming.append({"gw": gw, "matches": matches})
+            else:
+                upcoming.append({"gw": gw, "matches": []})  # blank GW
+        result.append({
+            "id": tid,
+            "name": t["name"],
+            "short_name": t["short_name"],
+            "position": t.get("position", 0),
+            "played": t.get("played", 0),
+            "won": t.get("win", 0),
+            "drawn": t.get("draw", 0),
+            "lost": t.get("loss", 0),
+            "points": t.get("points", 0),
+            "goals_for": gf,
+            "goals_against": ga,
+            "goal_diff": gf - ga,
+            "strength_home": t.get("strength_overall_home", 3),
+            "strength_away": t.get("strength_overall_away", 3),
+            "upcoming": upcoming,
+        })
+
+    # Sort by league position (0 = not set yet, put at end), then name
+    result.sort(key=lambda t: (t["position"] or 99, t["name"]))
+
+    return {"teams": result, "gws": tracker_gws}

@@ -22,9 +22,9 @@ W_FORM = 0.10
 W_THREAT = 0.10
 W_XGC = 0.20
 
-# FPL team strength rating bounds (from bootstrap-static strength_overall fields)
-STRENGTH_MIN = 975
-STRENGTH_MAX = 1365
+# FPL team strength rating bounds — 2026-27 API uses 1-5 integer scale
+STRENGTH_MIN = 2
+STRENGTH_MAX = 5
 
 SEMAPHORE_LIMIT = 20
 CACHE_TTL_SECONDS = 1800  # 30 minutes

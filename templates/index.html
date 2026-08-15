@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.7</p>
+        <p class="version">v3.8</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -21,6 +21,8 @@
             <button class="tab-btn active" data-tab="optimizer">Squad Optimizer</button>
             <button class="tab-btn" data-tab="myteam">My Team &amp; Transfers</button>
             <button class="tab-btn" data-tab="players">All Player Predictions</button>
+            <button class="tab-btn" data-tab="teams">Team Overview</button>
+            <button class="tab-btn" data-tab="fixtures">Fixture Tracker</button>
             <button class="tab-btn" data-tab="backtest">Backtest</button>
         </div>
 
@@ -279,6 +281,50 @@
                             <tr><td colspan="12" class="loading"><span class="spinner"></span>Loading...</td></tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== TAB: Team Overview ===== -->
+        <div class="tab-content hidden" id="tab-teams">
+            <div class="section-card">
+                <h2>Team Overview — 2026/27</h2>
+                <p class="section-hint">League table, team strengths, and upcoming fixture difficulty.</p>
+                <div style="overflow-x:auto">
+                    <table class="players-table" id="teams-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Team</th>
+                                <th>P</th>
+                                <th>W</th>
+                                <th>D</th>
+                                <th>L</th>
+                                <th>GF</th>
+                                <th>GA</th>
+                                <th>GD</th>
+                                <th>Pts</th>
+                                <th>Str (H)</th>
+                                <th>Str (A)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="teams-table-body">
+                            <tr><td colspan="12" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== TAB: Fixture Tracker ===== -->
+        <div class="tab-content hidden" id="tab-fixtures">
+            <div class="section-card">
+                <h2>Fixture Tracker — Next 8 Gameweeks</h2>
+                <p class="section-hint">Colour = FDR difficulty from that team's perspective. <span class="fdr-key"><span class="fdr fdr-1">1</span><span class="fdr fdr-2">2</span><span class="fdr fdr-3">3</span><span class="fdr fdr-4">4</span><span class="fdr fdr-5">5</span></span></p>
+                <div style="overflow-x:auto">
+                    <div id="fixture-tracker-grid">
+                        <div class="loading"><span class="spinner"></span>Loading...</div>
+                    </div>
                 </div>
             </div>
         </div>

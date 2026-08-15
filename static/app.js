@@ -42,6 +42,9 @@ document.addEventListener("DOMContentLoaded", () => {
             $$(".tab-content").forEach((c) => c.classList.add("hidden"));
             btn.classList.add("active");
             $(`#tab-${btn.dataset.tab}`).classList.remove("hidden");
+            if (btn.dataset.tab === "teams" || btn.dataset.tab === "fixtures") {
+                loadTeams();
+            }
         });
     });
 
@@ -746,6 +749,97 @@ function applyBestWeights() {
     $$(".tab-content").forEach(c => c.classList.add("hidden"));
     $(".tab-btn[data-tab='optimizer']").classList.add("active");
     $("#tab-optimizer").classList.remove("hidden");
+}
+
+// ─── Team Overview & Fixture Tracker ─────────────────────────────────────────
+
+let _teamsData = null;
+
+async function loadTeams() {
+    if (_teamsData) {
+        renderTeamOverview(_teamsData);
+        renderFixtureTracker(_teamsData);
+        return;
+    }
+    const loadingRow = `<tr><td colspan="13" class="loading"><span class="spinner"></span>Loading teams…</td></tr>`;
+    $("#teams-table-body").innerHTML = loadingRow;
+    $("#fixture-tracker-grid").innerHTML = '<p class="section-hint" style="color:#8b949e">Loading fixtures…</p>';
+    try {
+        const resp = await fetch("/api/teams");
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+        _teamsData = await resp.json();
+        renderTeamOverview(_teamsData);
+        renderFixtureTracker(_teamsData);
+    } catch (e) {
+        $("#teams-table-body").innerHTML = `<tr><td colspan="13" class="loading" style="color:#ff6b6b">Failed to load: ${e.message}</td></tr>`;
+        $("#fixture-tracker-grid").innerHTML = `<p style="color:#ff6b6b">Failed to load: ${e.message}</p>`;
+    }
+}
+
+function renderTeamOverview(data) {
+    const { teams } = data;
+    $("#teams-table-body").innerHTML = teams.map(t => {
+        const gd = t.goal_diff >= 0 ? `+${t.goal_diff}` : `${t.goal_diff}`;
+        const gdColor = t.goal_diff > 0 ? "#00ff87" : t.goal_diff < 0 ? "#ff6b6b" : "#e0e0e0";
+        const posLabel = t.position || "-";
+        return `<tr>
+            <td style="color:#8b949e;text-align:center">${posLabel}</td>
+            <td style="font-weight:600">${t.name}</td>
+            <td style="text-align:center">${t.played}</td>
+            <td style="text-align:center;color:#00ff87">${t.won}</td>
+            <td style="text-align:center;color:#8b949e">${t.drawn}</td>
+            <td style="text-align:center;color:#ff6b6b">${t.lost}</td>
+            <td style="text-align:center">${t.goals_for}</td>
+            <td style="text-align:center">${t.goals_against}</td>
+            <td style="text-align:center;color:${gdColor};font-weight:600">${gd}</td>
+            <td style="text-align:center;font-weight:700;color:#00ff87">${t.points}</td>
+            <td style="text-align:center;color:#a78bfa">${t.strength_home}</td>
+            <td style="text-align:center;color:#60a5fa">${t.strength_away}</td>
+        </tr>`;
+    }).join("");
+}
+
+function renderFixtureTracker(data) {
+    const { teams, gws } = data;
+    if (!gws || gws.length === 0) {
+        $("#fixture-tracker-grid").innerHTML = "<p style='color:#8b949e'>No upcoming fixtures available.</p>";
+        return;
+    }
+
+    let html = '<div class="fixture-grid-wrap"><table class="fixture-grid">';
+
+    // Header row
+    html += "<thead><tr>";
+    html += `<th class="team-col">Team</th>`;
+    gws.forEach(gw => { html += `<th>GW${gw}</th>`; });
+    html += "</tr></thead>";
+
+    // Body rows
+    html += "<tbody>";
+    teams.forEach(t => {
+        html += "<tr>";
+        html += `<td class="team-name-cell">${t.short_name}</td>`;
+        t.upcoming.forEach(gwData => {
+            if (gwData.matches.length === 0) {
+                html += `<td style="color:#30363d">—</td>`;
+            } else {
+                html += `<td><div class="fixture-cell">`;
+                gwData.matches.forEach(m => {
+                    const haClass = m.is_home ? "home" : "";
+                    const haLabel = m.is_home ? "H" : "A";
+                    html += `<div class="fixture-match">
+                        <span class="fdr fdr-${m.fdr}">${m.opp_short}</span>
+                        <span class="ha ${haClass}">${haLabel}</span>
+                    </div>`;
+                });
+                html += `</div></td>`;
+            }
+        });
+        html += "</tr>";
+    });
+    html += "</tbody></table></div>";
+
+    $("#fixture-tracker-grid").innerHTML = html;
 }
 
 // ─── SVG line chart ───────────────────────────────────────────────────────────

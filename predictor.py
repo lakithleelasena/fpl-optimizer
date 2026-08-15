@@ -64,7 +64,15 @@ def predict_points(
     games_played = stats["games_played"]
 
     start_likelihood = _compute_start_likelihood(player)
-    fixture_ease, fixture_multiplier = _compute_fixture_difficulty(opponent_strengths)
+
+    # Use pre-computed FDR ease if available (_gw_ease is set by _gwN_player in main.py).
+    # Falls back to strength-based computation (used by backtest with historical data).
+    precomputed_ease = player.get("_gw_ease")
+    if precomputed_ease is not None:
+        fixture_ease = precomputed_ease
+        fixture_multiplier = 0.5 + fixture_ease
+    else:
+        fixture_ease, fixture_multiplier = _compute_fixture_difficulty(opponent_strengths)
 
     is_home = player.get("is_home", 0.5)
 
