@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 class OptimizeRequest(BaseModel):
     budget: int = 1000
-    n_gw: int = 1                      # number of gameweeks to optimise for (1–3)
+    n_gw: int = 1
+    # Legacy weights (backtest path only)
     w_home_away: float = 0.05
     w_season: float = 0.20
     w_xgi: float = 0.10
@@ -13,6 +14,10 @@ class OptimizeRequest(BaseModel):
     w_form: float = 0.10
     w_threat: float = 0.10
     w_xgc: float = 0.20
+    # New formula factors
+    form_factor: float = 1.0
+    cs_factor: float = 1.0
+    atk_factor: float = 1.0
 
 
 class PlayerOut(BaseModel):
@@ -57,11 +62,12 @@ class OptimizeResponse(BaseModel):
 # --- Transfer advice models ---
 
 class TransferRequest(BaseModel):
-    current_team: List[int]          # list of 15 player IDs
+    current_team: List[int]
     free_transfers: int = 1
-    budget_in_bank: int = 0          # tenths of £ (e.g. 5 = £0.5m)
-    chips_available: List[str] = []  # "wildcard", "free_hit", "bench_boost", "triple_captain"
-    n_gw: int = 3                    # number of gameweeks to optimise transfers over (1–4)
+    budget_in_bank: int = 0
+    chips_available: List[str] = []
+    n_gw: int = 3
+    # Legacy weights (backtest path only)
     w_home_away: float = 0.05
     w_season: float = 0.20
     w_xgi: float = 0.10
@@ -69,6 +75,10 @@ class TransferRequest(BaseModel):
     w_form: float = 0.10
     w_threat: float = 0.10
     w_xgc: float = 0.20
+    # New formula factors
+    form_factor: float = 1.0
+    cs_factor: float = 1.0
+    atk_factor: float = 1.0
 
 
 class TransferSuggestion(BaseModel):

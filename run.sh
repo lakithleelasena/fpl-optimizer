@@ -9,13 +9,10 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 
-# Activate virtual environment
-source .venv/bin/activate
-
-# Install/update dependencies
+# Install/update dependencies using venv's pip directly
 echo "Installing dependencies..."
-pip install -r requirements.txt -q
+.venv/bin/pip install -r requirements.txt -q
 
 # Start the app
 echo "Starting FPL Optimizer at http://localhost:8000"
-uvicorn main:app --reload --port 8000
+.venv/bin/uvicorn main:app --reload --port 8000

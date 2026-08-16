@@ -12,7 +12,9 @@ from fastapi.templating import Jinja2Templates
 # Changes every restart/deploy — forces browser to fetch fresh static files
 _BUILD_TS = int(time.time())
 
-from fpl_client import fetch_all_data
+from fpl_client import fetch_all_data, invalidate_cache
+from odds_client import fetch_odds_xg, load_odds_cache, get_odds_cache_meta
+from config import ODDS_API_KEY
 from models import (
     ChipRecommendation,
     OptimizeRequest,
@@ -54,8 +56,18 @@ def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
     opps = player["gw_fixtures"].get(gw_id, [])
     strengths = [team_strengths.get(o, 0) for o in opps]
     is_home = player.get("gw_home", {}).get(gw_id, 0.5)
-    fdr_ease = player.get("gw_ease", {}).get(gw_id)  # pre-computed FDR ease for this GW
-    return {**player, "opponents": opps, "opponent_strengths": strengths, "n_fixtures": len(opps), "is_home": is_home, "_gw_ease": fdr_ease}
+    fdr_ease = player.get("gw_ease", {}).get(gw_id)
+    gw_xg = player.get("gw_match_xg", {}).get(gw_id, {})
+    return {
+        **player,
+        "opponents": opps,
+        "opponent_strengths": strengths,
+        "n_fixtures": len(opps),
+        "is_home": is_home,
+        "_gw_ease": fdr_ease,
+        "match_team_xg": gw_xg.get("team_xg", 0.0),
+        "match_opp_xg": gw_xg.get("opp_xg", 0.0),
+    }
 
 
 def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
@@ -157,6 +169,55 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
     )
 
 
+@app.get("/api/odds-debug")
+async def odds_debug():
+    """Diagnostic: show key status and raw Odds API response."""
+    import httpx
+    from config import ODDS_API_URL
+    key_loaded = bool(ODDS_API_KEY)
+    key_preview = (ODDS_API_KEY[:6] + "…") if key_loaded else "(empty)"
+    if not key_loaded:
+        return {"key_loaded": False, "key_preview": key_preview}
+    try:
+        params = {"apiKey": ODDS_API_KEY, "regions": "uk", "markets": "totals", "oddsFormat": "decimal"}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(ODDS_API_URL, params=params)
+        return {
+            "key_loaded": True,
+            "key_preview": key_preview,
+            "status_code": resp.status_code,
+            "event_count": len(resp.json()) if resp.status_code == 200 else None,
+            "error": resp.text if resp.status_code != 200 else None,
+            "first_event": resp.json()[0] if resp.status_code == 200 and resp.json() else None,
+        }
+    except Exception as e:
+        return {"key_loaded": True, "key_preview": key_preview, "exception": str(e)}
+
+
+@app.post("/api/refresh-odds")
+async def refresh_odds():
+    """Force-fetch fresh odds from The Odds API and save to cache. Invalidates FPL data cache."""
+    if not ODDS_API_KEY:
+        raise HTTPException(status_code=400, detail="ODDS_API_KEY is not configured")
+    data = await fetch_all_data()
+    next_gw = data["next_gw"]
+    upcoming_fix_list = [f for f in data["fixtures"] if f.get("event") in data["upcoming_gws"]]
+    odds = await fetch_odds_xg(
+        data["teams"], upcoming_fix_list, current_gw=next_gw, force_refresh=True
+    )
+    if not odds:
+        raise HTTPException(status_code=502, detail="Odds API returned no data — check key or try again later")
+    # Invalidate FPL cache so next prediction fetch uses updated odds
+    invalidate_cache()
+    meta = get_odds_cache_meta()
+    return {
+        "status": "ok",
+        "gameweek": next_gw,
+        "fixtures_found": len(odds),
+        "fetched_at": meta["fetched_at"] if meta else None,
+    }
+
+
 @app.get("/api/next-gw")
 async def get_next_gw():
     data = await fetch_all_data()
@@ -172,12 +233,18 @@ async def get_players(
     w_form: float = W_FORM,
     w_threat: float = W_THREAT,
     w_xgc: float = W_XGC,
+    form_factor: float = 1.0,
+    cs_factor: float = 1.0,
+    atk_factor: float = 1.0,
 ):
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred = predict_points(p_gw1, w_home_away, w_season, w_xgi, w_fixture, w_form, w_threat, w_xgc)
+        pred = predict_points(
+            p_gw1, w_home_away, w_season, w_xgi, w_fixture, w_form, w_threat, w_xgc,
+            form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
+        )
         result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
@@ -192,16 +259,20 @@ async def run_optimize(req: OptimizeRequest):
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred_gw1 = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+        pred_gw1 = predict_points(
+            p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
+            form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+        )
         out = _build_player_out(p_gw1, pred_gw1)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
 
-        # Per-GW breakdown: run predict_points with each GW's own fixture context
-        # so home/away and fixture difficulty reflect the actual upcoming opponent
         gw_pts = []
         for gw_id in data["upcoming_gws"]:
             p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
-            pred_gwN = predict_points(p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+            pred_gwN = predict_points(
+                p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
+                form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+            )
             n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
             gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
         out["gw_pts"] = gw_pts
@@ -271,15 +342,20 @@ async def get_transfer_advice(req: TransferRequest):
     enriched = []
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
-        pred_gw1 = predict_points(p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+        pred_gw1 = predict_points(
+            p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
+            form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+        )
         out = _build_player_out(p_gw1, pred_gw1)
-        out["cost"] = p["cost"]  # raw tenths for optimizer budget calculations
+        out["cost"] = p["cost"]
 
-        # Per-GW breakdown using each GW's own fixture context
         gw_pts = []
         for gw_id in data["upcoming_gws"]:
             p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
-            pred_gwN = predict_points(p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc)
+            pred_gwN = predict_points(
+                p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
+                form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+            )
             n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
             gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
         out["gw_pts"] = gw_pts
@@ -357,6 +433,7 @@ async def get_teams():
     fixtures = data["fixtures"]
     next_gw = data["next_gw"]
     teams_short = data.get("teams_short", {})
+    team_rolling = data.get("team_rolling", {})
 
     # Next 8 upcoming (non-finished) GWs
     all_events = sorted(set(f["event"] for f in fixtures if f.get("event")))
@@ -399,6 +476,30 @@ async def get_teams():
             "fdr": a_fdr,
         })
 
+    # Odds API xG for the next GW (from file cache)
+    odds_xg_cache = load_odds_cache(next_gw)
+    next_gw_team_odds: dict[int, dict] = {}
+    for fix in fixtures:
+        fid = fix.get("id")
+        if fix.get("event") != next_gw or fid not in odds_xg_cache:
+            continue
+        h_id, a_id = fix["team_h"], fix["team_a"]
+        fix_odds = odds_xg_cache[fid]
+        if h_id in fix_odds:
+            vals = fix_odds[h_id]
+            next_gw_team_odds[h_id] = {"team_xg": vals[0], "opp_xg": vals[1]}
+        if a_id in fix_odds:
+            vals = fix_odds[a_id]
+            next_gw_team_odds[a_id] = {"team_xg": vals[0], "opp_xg": vals[1]}
+
+    odds_meta = get_odds_cache_meta()
+    odds_status = {
+        "has_key": bool(ODDS_API_KEY),
+        "gameweek": odds_meta["gameweek"] if odds_meta else None,
+        "fetched_at": odds_meta["fetched_at"] if odds_meta else None,
+        "fixture_count": odds_meta["fixture_count"] if odds_meta else 0,
+    }
+
     result = []
     for t in bootstrap_teams:
         tid = t["id"]
@@ -411,6 +512,8 @@ async def get_teams():
                 upcoming.append({"gw": gw, "matches": matches})
             else:
                 upcoming.append({"gw": gw, "matches": []})  # blank GW
+        t_roll = team_rolling.get(tid, {})
+        team_odds = next_gw_team_odds.get(tid, {})
         result.append({
             "id": tid,
             "name": t["name"],
@@ -426,10 +529,14 @@ async def get_teams():
             "goal_diff": gf - ga,
             "strength_home": t.get("strength_overall_home", 3),
             "strength_away": t.get("strength_overall_away", 3),
+            "attack_xg6": t_roll.get("attack_xg6", 0.0),
+            "defence_xg6": t_roll.get("defence_xg6", 0.0),
+            "odds_team_xg": team_odds.get("team_xg"),
+            "odds_opp_xg": team_odds.get("opp_xg"),
             "upcoming": upcoming,
         })
 
     # Sort by league position (0 = not set yet, put at end), then name
     result.sort(key=lambda t: (t["position"] or 99, t["name"]))
 
-    return {"teams": result, "gws": tracker_gws}
+    return {"teams": result, "gws": tracker_gws, "odds_status": odds_status}

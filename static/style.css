@@ -874,6 +874,41 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 .fixture-match .ha { font-size: 0.6rem; color: rgba(255,255,255,0.7); }
 .fixture-match .ha.home { color: #00ff87; }
 
+/* ─── Odds status bar ──────────────────────────────────────────────────────── */
+
+.odds-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.odds-status-text {
+    font-size: 0.82rem;
+}
+
+.btn-refresh-odds {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 0.3rem 0.85rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-refresh-odds:hover:not(:disabled) {
+    background: #30363d;
+    border-color: #8b949e;
+}
+
+.btn-refresh-odds:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* ─── Responsive ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {

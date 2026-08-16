@@ -13,10 +13,10 @@ let mySquad = { GKP: [], DEF: [], MID: [], FWD: [] };
 
 document.addEventListener("DOMContentLoaded", () => {
     // Weight slider sync
-    ["home-away", "season", "xgi", "fixture", "form", "threat", "xgc"].forEach((w) => {
-        const slider = $(`#w-${w}`);
-        const display = $(`#w-${w}-val`);
-        slider.addEventListener("input", () => { display.textContent = slider.value; });
+    ["form-factor", "cs-factor", "atk-factor"].forEach((id) => {
+        const slider = $(`#${id}`);
+        const display = $(`#${id}-val`);
+        slider.addEventListener("input", () => { display.textContent = parseFloat(slider.value).toFixed(1); });
     });
 
     $("#btn-optimize").addEventListener("click", runOptimize);
@@ -99,13 +99,9 @@ async function runOptimize() {
     const body = {
         budget: parseInt($("#budget").value) || 1000,
         n_gw: parseInt($("#n-gw").value) || 1,
-        w_home_away: parseFloat($("#w-home-away").value),
-        w_season: parseFloat($("#w-season").value),
-        w_xgi: parseFloat($("#w-xgi").value),
-        w_fixture: parseFloat($("#w-fixture").value),
-        w_form: parseFloat($("#w-form").value),
-        w_threat: parseFloat($("#w-threat").value),
-        w_xgc: parseFloat($("#w-xgc").value),
+        form_factor: parseFloat($("#form-factor").value),
+        cs_factor: parseFloat($("#cs-factor").value),
+        atk_factor: parseFloat($("#atk-factor").value),
     };
 
     try {
@@ -121,10 +117,10 @@ async function runOptimize() {
         const data = await resp.json();
         renderSquad(data, data.captain_id, data.vice_captain_id);
 
-        // Refresh player table with the same weights so scores match pitch cards
+        // Refresh player table with the same factors so scores match pitch cards
         try {
             const playersResp = await fetch(
-                `/api/players?w_home_away=${body.w_home_away}&w_season=${body.w_season}&w_xgi=${body.w_xgi}&w_fixture=${body.w_fixture}&w_form=${body.w_form}&w_threat=${body.w_threat}&w_xgc=${body.w_xgc}`
+                `/api/players?form_factor=${body.form_factor}&cs_factor=${body.cs_factor}&atk_factor=${body.atk_factor}`
             );
             if (!playersResp.ok) throw new Error(`HTTP ${playersResp.status}`);
             allPlayers = await playersResp.json();
@@ -312,6 +308,9 @@ async function runTransferAdvice() {
         budget_in_bank: bankValue,
         chips_available: chips,
         n_gw: parseInt($("#n-gw-transfer").value) || 3,
+        form_factor: parseFloat($("#form-factor").value),
+        cs_factor: parseFloat($("#cs-factor").value),
+        atk_factor: parseFloat($("#atk-factor").value),
     };
 
     try {
@@ -755,13 +754,13 @@ function applyBestWeights() {
 
 let _teamsData = null;
 
-async function loadTeams() {
-    if (_teamsData) {
+async function loadTeams(forceReload = false) {
+    if (_teamsData && !forceReload) {
         renderTeamOverview(_teamsData);
         renderFixtureTracker(_teamsData);
         return;
     }
-    const loadingRow = `<tr><td colspan="13" class="loading"><span class="spinner"></span>Loading teams…</td></tr>`;
+    const loadingRow = `<tr><td colspan="16" class="loading"><span class="spinner"></span>Loading teams…</td></tr>`;
     $("#teams-table-body").innerHTML = loadingRow;
     $("#fixture-tracker-grid").innerHTML = '<p class="section-hint" style="color:#8b949e">Loading fixtures…</p>';
     try {
@@ -771,17 +770,62 @@ async function loadTeams() {
         renderTeamOverview(_teamsData);
         renderFixtureTracker(_teamsData);
     } catch (e) {
-        $("#teams-table-body").innerHTML = `<tr><td colspan="13" class="loading" style="color:#ff6b6b">Failed to load: ${e.message}</td></tr>`;
+        $("#teams-table-body").innerHTML = `<tr><td colspan="16" class="loading" style="color:#ff6b6b">Failed to load: ${e.message}</td></tr>`;
         $("#fixture-tracker-grid").innerHTML = `<p style="color:#ff6b6b">Failed to load: ${e.message}</p>`;
     }
 }
 
+async function refreshOdds() {
+    const btn = document.getElementById("refresh-odds-btn");
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    try {
+        const resp = await fetch("/api/refresh-odds", { method: "POST" });
+        const body = await resp.json();
+        if (!resp.ok) throw new Error(body.detail || `Error ${resp.status}`);
+        _teamsData = null;
+        await loadTeams(true);
+    } catch (e) {
+        alert("Odds refresh failed: " + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Refresh Odds";
+    }
+}
+
+function renderOddsStatus(oddsStatus) {
+    const el = document.getElementById("odds-status");
+    if (!el) return;
+    if (!oddsStatus || !oddsStatus.has_key) {
+        el.innerHTML = '<span style="color:#8b949e">Odds API: no key configured</span>';
+        return;
+    }
+    if (oddsStatus.fetched_at && oddsStatus.gameweek) {
+        const dt = new Date(oddsStatus.fetched_at + "Z");
+        const fmt = dt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+        el.innerHTML = `<span style="color:#00ff87">Odds API: GW${oddsStatus.gameweek} · ${oddsStatus.fixture_count} fixtures · updated ${fmt} UTC</span>`;
+    } else {
+        el.innerHTML = `<span style="color:#f5a623">Odds API: key configured — no cache yet, click Refresh</span>`;
+    }
+}
+
 function renderTeamOverview(data) {
-    const { teams } = data;
+    const { teams, odds_status } = data;
+    renderOddsStatus(odds_status);
     $("#teams-table-body").innerHTML = teams.map(t => {
         const gd = t.goal_diff >= 0 ? `+${t.goal_diff}` : `${t.goal_diff}`;
         const gdColor = t.goal_diff > 0 ? "#00ff87" : t.goal_diff < 0 ? "#ff6b6b" : "#e0e0e0";
         const posLabel = t.position || "-";
+        const attXg = t.attack_xg6 != null ? t.attack_xg6.toFixed(2) : "-";
+        const defXg = t.defence_xg6 != null ? t.defence_xg6.toFixed(2) : "-";
+        const attColor = t.attack_xg6 >= 2.0 ? "#00ff87" : t.attack_xg6 >= 1.2 ? "#f5a623" : "#ff6b6b";
+        const defColor = t.defence_xg6 <= 1.0 ? "#00ff87" : t.defence_xg6 <= 1.8 ? "#f5a623" : "#ff6b6b";
+        // Odds API columns (null = no data)
+        const oddsAtt = t.odds_team_xg != null ? t.odds_team_xg.toFixed(2) : "–";
+        const oddsDef = t.odds_opp_xg != null ? t.odds_opp_xg.toFixed(2) : "–";
+        const oddsAttColor = t.odds_team_xg == null ? "#8b949e" : t.odds_team_xg >= 2.0 ? "#00ff87" : t.odds_team_xg >= 1.2 ? "#f5a623" : "#ff6b6b";
+        const oddsDefColor = t.odds_opp_xg == null ? "#8b949e" : t.odds_opp_xg <= 1.0 ? "#00ff87" : t.odds_opp_xg <= 1.8 ? "#f5a623" : "#ff6b6b";
         return `<tr>
             <td style="color:#8b949e;text-align:center">${posLabel}</td>
             <td style="font-weight:600">${t.name}</td>
@@ -795,6 +839,10 @@ function renderTeamOverview(data) {
             <td style="text-align:center;font-weight:700;color:#00ff87">${t.points}</td>
             <td style="text-align:center;color:#a78bfa">${t.strength_home}</td>
             <td style="text-align:center;color:#60a5fa">${t.strength_away}</td>
+            <td style="text-align:center;font-weight:600;color:${attColor}">${attXg}</td>
+            <td style="text-align:center;font-weight:600;color:${defColor}">${defXg}</td>
+            <td style="text-align:center;font-weight:600;color:${oddsAttColor}">${oddsAtt}</td>
+            <td style="text-align:center;font-weight:600;color:${oddsDefColor}">${oddsDef}</td>
         </tr>`;
     }).join("");
 }

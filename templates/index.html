@@ -10,7 +10,7 @@
     <header>
         <h1>FPL Squad Optimizer</h1>
         <p>Predict next gameweek points and find the optimal 15-player squad</p>
-        <p class="version">v3.8</p>
+        <p class="version">v3.11</p>
         <p class="next-gw-badge" id="next-gw-badge">Loading...</p>
     </header>
 
@@ -43,32 +43,16 @@
                     </select>
                 </div>
                 <div class="control-group">
-                    <label>Home/Away Weight <span class="weight-value" id="w-home-away-val">0.05</span></label>
-                    <input type="range" id="w-home-away" min="0" max="1" step="0.05" value="0.05">
+                    <label>Form Sensitivity <span class="weight-value" id="form-factor-val">1.0</span> <small style="color:#888">0 = ignore, 2 = double</small></label>
+                    <input type="range" id="form-factor" min="0" max="2" step="0.1" value="1.0">
                 </div>
                 <div class="control-group">
-                    <label>Season Avg Weight <span class="weight-value" id="w-season-val">0.20</span></label>
-                    <input type="range" id="w-season" min="0" max="1" step="0.05" value="0.20">
+                    <label>Clean Sheet Priority <span class="weight-value" id="cs-factor-val">1.0</span> <small style="color:#888">(GKP/DEF)</small></label>
+                    <input type="range" id="cs-factor" min="0" max="2" step="0.1" value="1.0">
                 </div>
                 <div class="control-group">
-                    <label>xG Involvement Weight <span class="weight-value" id="w-xgi-val">0.10</span></label>
-                    <input type="range" id="w-xgi" min="0" max="1" step="0.05" value="0.10">
-                </div>
-                <div class="control-group">
-                    <label>Fixture Difficulty Weight <span class="weight-value" id="w-fixture-val">0.35</span></label>
-                    <input type="range" id="w-fixture" min="0" max="1" step="0.05" value="0.35">
-                </div>
-                <div class="control-group">
-                    <label>Form Weight <span class="weight-value" id="w-form-val">0.10</span></label>
-                    <input type="range" id="w-form" min="0" max="1" step="0.05" value="0.10">
-                </div>
-                <div class="control-group">
-                    <label>ICT Threat Weight <span class="weight-value" id="w-threat-val">0.10</span> <small style="color:#888">(MID/FWD)</small></label>
-                    <input type="range" id="w-threat" min="0" max="1" step="0.05" value="0.10">
-                </div>
-                <div class="control-group">
-                    <label>xGC (Clean Sheet) Weight <span class="weight-value" id="w-xgc-val">0.20</span> <small style="color:#888">(GKP/DEF)</small></label>
-                    <input type="range" id="w-xgc" min="0" max="1" step="0.05" value="0.20">
+                    <label>Attack Priority <span class="weight-value" id="atk-factor-val">1.0</span> <small style="color:#888">(goals &amp; assists)</small></label>
+                    <input type="range" id="atk-factor" min="0" max="2" step="0.1" value="1.0">
                 </div>
                 <div class="control-group" style="display:flex;align-items:end">
                     <button class="btn-optimize" id="btn-optimize">Optimize Squad</button>
@@ -273,7 +257,7 @@
                                 <th onclick="sortTable('ep_next')">FPL ep_next</th>
                                 <th onclick="sortTable('season_avg')">Season</th>
                                 <th onclick="sortTable('form_score')">Form</th>
-                                <th onclick="sortTable('xg_score')">xG/xGC</th>
+                                <th onclick="sortTable('xg_score')" title="Expected goal involvement per match">Plyr xG</th>
                                 <th>Add</th>
                             </tr>
                         </thead>
@@ -289,6 +273,10 @@
         <div class="tab-content hidden" id="tab-teams">
             <div class="section-card">
                 <h2>Team Overview — 2026/27</h2>
+                <div class="odds-status-bar">
+                    <span id="odds-status" class="odds-status-text">Loading odds status…</span>
+                    <button id="refresh-odds-btn" class="btn-refresh-odds" onclick="refreshOdds()">Refresh Odds</button>
+                </div>
                 <p class="section-hint">League table, team strengths, and upcoming fixture difficulty.</p>
                 <div style="overflow-x:auto">
                     <table class="players-table" id="teams-table">
@@ -306,10 +294,14 @@
                                 <th>Pts</th>
                                 <th>Str (H)</th>
                                 <th>Str (A)</th>
+                                <th title="Goals For last 6 matches">GF6</th>
+                                <th title="Goals Against last 6 matches">GA6</th>
+                                <th title="Expected goals for next GW (Odds API)">Odds Att</th>
+                                <th title="Expected goals against next GW (Odds API)">Odds Def</th>
                             </tr>
                         </thead>
                         <tbody id="teams-table-body">
-                            <tr><td colspan="12" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                            <tr><td colspan="16" class="loading"><span class="spinner"></span>Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
