@@ -71,6 +71,7 @@ def _predict_points_legacy(
         return {
             "predicted_points": 0.0, "home_away_score": 0.0, "season_avg": 0.0,
             "xg_score": 0.0, "fixture_ease": fixture_ease, "start_likelihood": start_likelihood,
+            "exp_minutes": start_likelihood,
             "form_score": 0.0, "threat_score": 0.0, "xgc_score": 0.0,
         }
 
@@ -107,6 +108,7 @@ def _predict_points_legacy(
         "xg_score": round(xg_score, 2),
         "fixture_ease": fixture_ease,
         "start_likelihood": start_likelihood,
+        "exp_minutes": start_likelihood,
         "form_score": round(float(form_score), 2),
         "threat_score": round(threat_score, 2),
         "xgc_score": round(xgc_score, 2),
@@ -127,7 +129,8 @@ def _predict_points_new(
     """
     stats = player["stats"]
     position = player.get("position", "MID")
-    start_likelihood = _compute_start_likelihood(player)
+    exp_start_pct = float(player.get("exp_start_pct") or 0.0)
+    exp_minutes = float(player.get("exp_minutes") or 0.0)
     season_avg = stats["season_avg"]
 
     match_team_xg = float(player.get("match_team_xg") or 0.0)
@@ -155,15 +158,15 @@ def _predict_points_new(
         atk_pts  = match_team_xg * goal_share  * _PTS_PER_GOAL[position] * atk_factor
         ast_pts  = match_team_xg * assist_share * 3 * atk_factor
 
-        predicted = start_likelihood * (
-            2 + cs_prob * cs_pts * cs_factor + xgc_pts + save_pts + atk_pts + ast_pts
+        predicted = (exp_start_pct * 2) + exp_minutes * (
+            cs_prob * cs_pts * cs_factor + xgc_pts + save_pts + atk_pts + ast_pts
         ) + form_adj
         xgc_score_out = round(cs_prob, 3)
     else:
         goal_pts = match_team_xg * goal_share  * _PTS_PER_GOAL[position] * atk_factor
         asst_pts = match_team_xg * assist_share * 3 * atk_factor
 
-        predicted = start_likelihood * (2 + goal_pts + asst_pts) + form_adj
+        predicted = (exp_start_pct * 2) + exp_minutes * (goal_pts + asst_pts) + form_adj
         xgc_score_out = 0.0
 
     player_xg = round(match_team_xg * (goal_share + assist_share), 3)
@@ -174,7 +177,8 @@ def _predict_points_new(
         "season_avg": round(season_avg, 2),
         "xg_score": player_xg,
         "fixture_ease": fixture_ease,
-        "start_likelihood": start_likelihood,
+        "start_likelihood": exp_start_pct,
+        "exp_minutes": exp_minutes,
         "form_score": round(form, 2),
         "threat_score": 0.0,
         "xgc_score": xgc_score_out,

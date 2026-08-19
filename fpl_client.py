@@ -7,13 +7,17 @@ from collections import defaultdict
 import httpx
 
 from config import (
+    AWAY_ADV_MULT,
     BOOTSTRAP_URL,
     CACHE_TTL_SECONDS,
     ELEMENT_SUMMARY_URL,
     FIXTURES_URL,
+    HOME_ADV_MULT,
+    LAST_SEASON_GAMES,
     LEAGUE_AVG_GOALS,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
+    TAPER_GAMES,
 )
 from odds_client import fetch_odds_xg
 
@@ -106,6 +110,14 @@ def _build_player_stats(
     recent_minutes = [gw["minutes"] for gw in history[-5:]]
     season_avg = total_points / games_played if games_played > 0 else 0.0
 
+    # ── Exp Start% / Exp Minutes source data: current season if any has been played ──
+    in_season_data = games_played > 0
+    total_minutes_season = sum(gw["minutes"] for gw in history)
+    if history and "starts" in history[0]:
+        total_starts_season = sum(gw.get("starts", 0) for gw in history)
+    else:
+        total_starts_season = sum(1 for gw in history if gw["minutes"] >= 60)
+
     # ── Participation rates: last 6 played matches ───────────────────────────
     last6 = played_gws[-6:]
     p_goals = sum(h.get("goals_scored", 0) for h in last6)
@@ -145,6 +157,10 @@ def _build_player_stats(
             est_team_goals = LEAGUE_AVG_GOALS * est_games
             goal_share = round(past_goals / est_team_goals, 4) if est_team_goals > 0 else 0.0
             assist_share = round(past_assists / est_team_goals, 4) if est_team_goals > 0 else 0.0
+            # Exp Start% / Exp Minutes source: last season's raw totals (see fetch_all_data
+            # for the divide-by-team-games step, since team games aren't known here)
+            total_minutes_season = past_mins
+            total_starts_season = past_starts
 
     return {
         "opponent_points": opponent_points,
@@ -156,7 +172,43 @@ def _build_player_stats(
         "goal_share": goal_share,
         "assist_share": assist_share,
         "saves_per_game": saves_per_game,
+        "in_season_data": in_season_data,
+        "total_minutes_season": total_minutes_season,
+        "total_starts_season": total_starts_season,
     }
+
+
+def _model_xg(
+    h_id: int, a_id: int, h_fdr: int, a_fdr: int, team_rolling: dict[int, dict], league_avg_defence: float,
+) -> tuple[float, float]:
+    """
+    Model-based (non-market) expected goals for one fixture, blending:
+      Tier 2: rolling 6-game averages × opponent defensive factor × home/away factor
+      Tier 3: FDR-based fallback
+    Tier 2 is phased in per team via a linear taper over its first TAPER_GAMES
+    played this season (0 games = pure Tier 3, TAPER_GAMES+ = pure Tier 2),
+    rather than switching all-or-nothing the moment a team has any data.
+    """
+    # Tier 3: FDR fallback — always available, used as the pre-season prior
+    h_mult = max(0.2, (5 - h_fdr) / 3)
+    a_mult = max(0.2, (5 - a_fdr) / 3)
+    tier3_h = LEAGUE_AVG_GOALS * h_mult
+    tier3_a = LEAGUE_AVG_GOALS * a_mult
+
+    h_roll = team_rolling.get(h_id)
+    a_roll = team_rolling.get(a_id)
+    if h_roll and a_roll and h_roll["attack_xg6"] > 0 and a_roll["attack_xg6"] > 0 and league_avg_defence > 0:
+        # Tier 2: rolling averages × opponent defensive factor × home/away factor
+        tier2_h = h_roll["attack_xg6"] * (a_roll["defence_xg6"] / league_avg_defence) * HOME_ADV_MULT
+        tier2_a = a_roll["attack_xg6"] * (h_roll["defence_xg6"] / league_avg_defence) * AWAY_ADV_MULT
+        w_h = min(1.0, h_roll["games_played"] / TAPER_GAMES)
+        w_a = min(1.0, a_roll["games_played"] / TAPER_GAMES)
+        model_h = w_h * tier2_h + (1 - w_h) * tier3_h
+        model_a = w_a * tier2_a + (1 - w_a) * tier3_a
+    else:
+        model_h, model_a = tier3_h, tier3_a
+
+    return round(max(0.2, model_h), 3), round(max(0.2, model_a), 3)
 
 
 def _build_gw_match_xg(
@@ -167,13 +219,16 @@ def _build_gw_match_xg(
     odds_xg: dict[int, dict[int, tuple[float, float]]],
 ) -> dict[int, dict[int, dict]]:
     """
-    Compute per-GW per-team (team_xg, opp_xg) using three-tier resolution:
-      Tier 1: Odds API  (if available)
-      Tier 2: rolling 6-game averages adjusted by opponent defensive record
-      Tier 3: FDR-based fallback (pre-season)
+    Compute per-GW per-team model xG and odds xG (kept separate — the final
+    blend between them is applied later, per-request, using the user's
+    odds_weight slider rather than baked into this cached fetch):
+      model_team_xg/model_opp_xg: Tier 2 (rolling averages) tapered against
+        Tier 3 (FDR fallback) by each team's games played this season — see _model_xg.
+      odds_team_xg/odds_opp_xg: Tier 1 (Odds API), or None if unavailable for the fixture.
 
-    Returns {gw_id: {team_id: {team_xg, opp_xg}}} with per-match averages.
-    DGW teams: accumulate then average so n_fixtures multiplication still works.
+    Returns {gw_id: {team_id: {model_team_xg, model_opp_xg, odds_team_xg, odds_opp_xg}}}
+    with per-match averages. DGW teams: accumulate then average so n_fixtures
+    multiplication still works; odds are averaged only over fixtures that had odds.
     """
     accum: dict[int, dict[int, dict]] = {gw: {} for gw in upcoming_gws}
 
@@ -186,42 +241,44 @@ def _build_gw_match_xg(
         h_fdr = fix.get("team_h_difficulty", 3)
         a_fdr = fix.get("team_a_difficulty", 3)
 
-        # Tier 1: Odds API
+        model_h_xg, model_a_xg = _model_xg(h_id, a_id, h_fdr, a_fdr, team_rolling, league_avg_defence)
+
         odds_fix = odds_xg.get(fid, {})
         if h_id in odds_fix:
-            h_xg, a_xg = odds_fix[h_id]
+            odds_h_xg, odds_a_xg = odds_fix[h_id]
         else:
-            h_roll = team_rolling.get(h_id)
-            a_roll = team_rolling.get(a_id)
-            if h_roll and a_roll and h_roll["attack_xg6"] > 0 and a_roll["attack_xg6"] > 0 and league_avg_defence > 0:
-                # Tier 2: rolling averages × opponent defensive factor
-                h_xg = h_roll["attack_xg6"] * (a_roll["defence_xg6"] / league_avg_defence)
-                a_xg = a_roll["attack_xg6"] * (h_roll["defence_xg6"] / league_avg_defence)
-                h_xg = round(max(0.2, h_xg), 3)
-                a_xg = round(max(0.2, a_xg), 3)
-            else:
-                # Tier 3: FDR fallback (pre-season)
-                h_mult = max(0.2, (5 - h_fdr) / 3)
-                a_mult = max(0.2, (5 - a_fdr) / 3)
-                h_xg = round(LEAGUE_AVG_GOALS * h_mult, 3)
-                a_xg = round(LEAGUE_AVG_GOALS * a_mult, 3)
+            odds_h_xg = odds_a_xg = None
 
-        for tid, t_xg, o_xg in ((h_id, h_xg, a_xg), (a_id, a_xg, h_xg)):
+        for tid, model_t, model_o, odds_t, odds_o in (
+            (h_id, model_h_xg, model_a_xg, odds_h_xg, odds_a_xg),
+            (a_id, model_a_xg, model_h_xg, odds_a_xg, odds_h_xg),
+        ):
             if tid not in accum[gw]:
-                accum[gw][tid] = {"t_sum": 0.0, "o_sum": 0.0, "n": 0}
-            accum[gw][tid]["t_sum"] += t_xg
-            accum[gw][tid]["o_sum"] += o_xg
-            accum[gw][tid]["n"] += 1
+                accum[gw][tid] = {
+                    "model_t_sum": 0.0, "model_o_sum": 0.0, "model_n": 0,
+                    "odds_t_sum": 0.0, "odds_o_sum": 0.0, "odds_n": 0,
+                }
+            acc = accum[gw][tid]
+            acc["model_t_sum"] += model_t
+            acc["model_o_sum"] += model_o
+            acc["model_n"] += 1
+            if odds_t is not None:
+                acc["odds_t_sum"] += odds_t
+                acc["odds_o_sum"] += odds_o
+                acc["odds_n"] += 1
 
     # Convert sums to per-match averages
     result: dict[int, dict[int, dict]] = {}
     for gw, teams in accum.items():
         result[gw] = {}
         for tid, acc in teams.items():
-            n = acc["n"]
+            model_n = acc["model_n"]
+            odds_n = acc["odds_n"]
             result[gw][tid] = {
-                "team_xg": round(acc["t_sum"] / n, 3) if n else 0.0,
-                "opp_xg":  round(acc["o_sum"] / n, 3) if n else 0.0,
+                "model_team_xg": round(acc["model_t_sum"] / model_n, 3) if model_n else 0.0,
+                "model_opp_xg":  round(acc["model_o_sum"] / model_n, 3) if model_n else 0.0,
+                "odds_team_xg":  round(acc["odds_t_sum"] / odds_n, 3) if odds_n else None,
+                "odds_opp_xg":   round(acc["odds_o_sum"] / odds_n, 3) if odds_n else None,
             }
     return result
 
@@ -365,6 +422,20 @@ async def fetch_all_data() -> dict:
 
             t_rolling = team_rolling.get(team_id, {})
 
+            # ── Exp Start% / Exp Minutes: current-season team games if any have been
+            #    played this season, else the fixed last-season length ──────────────
+            team_games = t_rolling.get("games_played", 0) if stats.get("in_season_data") else LAST_SEASON_GAMES
+            if team_games > 0:
+                exp_minutes = min(1.0, stats["total_minutes_season"] / (team_games * 90))
+                exp_start_pct = min(1.0, stats["total_starts_season"] / team_games)
+            else:
+                exp_minutes = 0.0
+                exp_start_pct = 0.0
+            chance = p.get("chance_of_playing_next_round")
+            availability = chance / 100.0 if chance is not None else 1.0
+            exp_minutes = round(exp_minutes * availability, 3)
+            exp_start_pct = round(exp_start_pct * availability, 3)
+
             players.append({
                 "id": pid,
                 "name": p["web_name"],
@@ -391,9 +462,15 @@ async def fetch_all_data() -> dict:
                 "goal_share": stats["goal_share"],
                 "assist_share": stats["assist_share"],
                 "saves_per_game": stats["saves_per_game"],
-                # Per-GW match xG (team and opponent)
+                "exp_minutes": exp_minutes,
+                "exp_start_pct": exp_start_pct,
+                # Per-GW match xG (team and opponent) — model (Tier 2/3) and odds (Tier 1)
+                # kept separate; final blend applied per-request in main.py using odds_weight
                 "gw_match_xg": {
-                    gw_id: gw_match_xg.get(gw_id, {}).get(team_id, {"team_xg": 0.0, "opp_xg": 0.0})
+                    gw_id: gw_match_xg.get(gw_id, {}).get(team_id, {
+                        "model_team_xg": 0.0, "model_opp_xg": 0.0,
+                        "odds_team_xg": None, "odds_opp_xg": None,
+                    })
                     for gw_id in upcoming_gws
                 },
                 # Team-level rolling stats (for Teams tab display)

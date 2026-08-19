@@ -18,6 +18,7 @@ class OptimizeRequest(BaseModel):
     form_factor: float = 1.0
     cs_factor: float = 1.0
     atk_factor: float = 1.0
+    odds_weight: float = 0.6  # blend weight for Tier 1 (odds) vs model (Tier 2/3) xG, when odds are available
 
 
 class PlayerOut(BaseModel):
@@ -33,6 +34,7 @@ class PlayerOut(BaseModel):
     xg_score: float
     fixture_ease: float
     start_likelihood: float
+    exp_minutes: float = 0.0
     chance_of_playing: Optional[int] = None
     minutes: int
     total_points: int
@@ -79,6 +81,7 @@ class TransferRequest(BaseModel):
     form_factor: float = 1.0
     cs_factor: float = 1.0
     atk_factor: float = 1.0
+    odds_weight: float = 0.6  # blend weight for Tier 1 (odds) vs model (Tier 2/3) xG, when odds are available
 
 
 class TransferSuggestion(BaseModel):

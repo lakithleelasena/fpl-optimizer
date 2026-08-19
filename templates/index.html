@@ -28,7 +28,7 @@
 
         <!-- ===== TAB: Squad Optimizer ===== -->
         <div class="tab-content" id="tab-optimizer">
-            <div class="controls">
+            <div class="controls controls-basic">
                 <div class="control-group">
                     <label>Budget (tenths, e.g. 1000 = £100.0m)</label>
                     <input type="number" id="budget" value="1000" min="500" max="2000" step="10">
@@ -42,20 +42,30 @@
                         <option value="4">Next 4 Gameweeks</option>
                     </select>
                 </div>
-                <div class="control-group">
-                    <label>Form Sensitivity <span class="weight-value" id="form-factor-val">1.0</span> <small style="color:#888">0 = ignore, 2 = double</small></label>
-                    <input type="range" id="form-factor" min="0" max="2" step="0.1" value="1.0">
-                </div>
-                <div class="control-group">
-                    <label>Clean Sheet Priority <span class="weight-value" id="cs-factor-val">1.0</span> <small style="color:#888">(GKP/DEF)</small></label>
-                    <input type="range" id="cs-factor" min="0" max="2" step="0.1" value="1.0">
-                </div>
-                <div class="control-group">
-                    <label>Attack Priority <span class="weight-value" id="atk-factor-val">1.0</span> <small style="color:#888">(goals &amp; assists)</small></label>
-                    <input type="range" id="atk-factor" min="0" max="2" step="0.1" value="1.0">
-                </div>
                 <div class="control-group" style="display:flex;align-items:end">
                     <button class="btn-optimize" id="btn-optimize">Optimize Squad</button>
+                </div>
+            </div>
+            <div class="controls controls-sliders">
+                <div class="control-group slider-group">
+                    <label class="slider-label"><span class="slider-title">Form Sensitivity</span><span class="weight-value" id="form-factor-val">1.0</span></label>
+                    <div class="slider-hint">0 = ignore, 2 = double</div>
+                    <input type="range" id="form-factor" min="0" max="2" step="0.1" value="1.0">
+                </div>
+                <div class="control-group slider-group">
+                    <label class="slider-label"><span class="slider-title">Clean Sheet Priority</span><span class="weight-value" id="cs-factor-val">1.0</span></label>
+                    <div class="slider-hint">GKP/DEF clean sheet weight</div>
+                    <input type="range" id="cs-factor" min="0" max="2" step="0.1" value="1.0">
+                </div>
+                <div class="control-group slider-group">
+                    <label class="slider-label"><span class="slider-title">Attack Priority</span><span class="weight-value" id="atk-factor-val">1.0</span></label>
+                    <div class="slider-hint">Goals &amp; assists weight</div>
+                    <input type="range" id="atk-factor" min="0" max="2" step="0.1" value="1.0">
+                </div>
+                <div class="control-group slider-group">
+                    <label class="slider-label"><span class="slider-title">Odds Weight</span><span class="weight-value" id="odds-weight-val">60%</span></label>
+                    <div class="slider-hint">vs model, when odds available</div>
+                    <input type="range" id="odds-weight" min="0" max="1" step="0.05" value="0.6">
                 </div>
             </div>
 
@@ -252,7 +262,8 @@
                                 <th onclick="sortTable('position')">Pos</th>
                                 <th onclick="sortTable('cost')">Cost</th>
                                 <th onclick="sortTable('predicted_points')">GW Pts</th>
-                                <th onclick="sortTable('start_likelihood')">Start %</th>
+                                <th onclick="sortTable('start_likelihood')">Exp Start%</th>
+                                <th onclick="sortTable('exp_minutes')">Exp Min%</th>
                                 <th onclick="sortTable('fixture_ease')">Fixture</th>
                                 <th onclick="sortTable('ep_next')">FPL ep_next</th>
                                 <th onclick="sortTable('season_avg')">Season</th>
@@ -262,7 +273,7 @@
                             </tr>
                         </thead>
                         <tbody id="table-body">
-                            <tr><td colspan="12" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                            <tr><td colspan="13" class="loading"><span class="spinner"></span>Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>

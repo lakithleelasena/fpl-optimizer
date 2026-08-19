@@ -60,6 +60,10 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
     margin-bottom: 1.5rem;
 }
 
+.controls-basic { margin-bottom: 1rem; }
+
+.controls-sliders { grid-template-columns: repeat(4, 1fr); }
+
 .control-group label {
     display: block;
     font-size: 0.8rem;
@@ -82,7 +86,27 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 
 .control-group input[type="range"] { padding: 0; }
 
-.weight-value { font-size: 0.75rem; color: #00ff87; float: right; }
+.weight-value { font-size: 0.75rem; color: #00ff87; }
+
+/* Uniform two-line header (title+value, then hint) so slider tracks in the
+   same row always align, regardless of how long each hint text is. */
+label.slider-label {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.15rem;
+}
+
+.slider-title { font-size: 0.8rem; color: #8b949e; }
+
+.slider-hint {
+    font-size: 0.7rem;
+    color: #888;
+    margin-bottom: 0.4rem;
+    min-height: 1em;
+}
 
 .btn-optimize {
     background: #00ff87;
@@ -511,6 +535,9 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 .player-card .player-cost { font-size: 0.7rem; color: #8b949e; }
 
 .player-card .start-likelihood {
+    display: flex;
+    justify-content: center;
+    gap: 0.4rem;
     font-size: 0.7rem;
     font-weight: 600;
     margin-bottom: 0.2rem;
@@ -911,10 +938,15 @@ header .next-gw-badge { display: block; margin: 0.3rem 0 0; font-size: 0.85rem; 
 
 /* ─── Responsive ───────────────────────────────────────────────────────────── */
 
+@media (max-width: 900px) {
+    .controls-sliders { grid-template-columns: repeat(2, 1fr); }
+}
+
 @media (max-width: 600px) {
     .player-card { min-width: 90px; padding: 0.4rem; }
     .player-card .player-name { font-size: 0.75rem; }
     .controls { grid-template-columns: 1fr; }
+    .controls-sliders { grid-template-columns: 1fr; }
     .transfer-row { flex-direction: column; }
     .transfer-out, .transfer-in { text-align: left; }
 }

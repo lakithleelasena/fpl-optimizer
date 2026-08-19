@@ -18,6 +18,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const display = $(`#${id}-val`);
         slider.addEventListener("input", () => { display.textContent = parseFloat(slider.value).toFixed(1); });
     });
+    const oddsWeightSlider = $("#odds-weight");
+    const oddsWeightVal = $("#odds-weight-val");
+    oddsWeightSlider.addEventListener("input", () => {
+        oddsWeightVal.textContent = `${Math.round(parseFloat(oddsWeightSlider.value) * 100)}%`;
+    });
 
     $("#btn-optimize").addEventListener("click", runOptimize);
     $("#search").addEventListener("input", renderTable);
@@ -102,6 +107,7 @@ async function runOptimize() {
         form_factor: parseFloat($("#form-factor").value),
         cs_factor: parseFloat($("#cs-factor").value),
         atk_factor: parseFloat($("#atk-factor").value),
+        odds_weight: parseFloat($("#odds-weight").value),
     };
 
     try {
@@ -120,7 +126,7 @@ async function runOptimize() {
         // Refresh player table with the same factors so scores match pitch cards
         try {
             const playersResp = await fetch(
-                `/api/players?form_factor=${body.form_factor}&cs_factor=${body.cs_factor}&atk_factor=${body.atk_factor}`
+                `/api/players?form_factor=${body.form_factor}&cs_factor=${body.cs_factor}&atk_factor=${body.atk_factor}&odds_weight=${body.odds_weight}`
             );
             if (!playersResp.ok) throw new Error(`HTTP ${playersResp.status}`);
             allPlayers = await playersResp.json();
@@ -489,6 +495,8 @@ function fixtureLabel(ease) {
 function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false, numGw = 1, gwNums = []) {
     const slPct = Math.round(p.start_likelihood * 100);
     const slColor = startColor(p.start_likelihood);
+    const emPct = Math.round((p.exp_minutes ?? 0) * 100);
+    const emColor = startColor(p.exp_minutes ?? 0);
     const badge = isCaptain
         ? `<div class="captain-badge">C</div>`
         : isViceCaptain
@@ -527,7 +535,10 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false, 
             <div class="player-pts">${displayPts.toFixed(1)}<span class="pts-label">${ptsLabel}</span></div>
             ${gwBreakdown}
             <div class="player-cost">£${p.cost.toFixed(1)}m</div>
-            <div class="start-likelihood" style="color:${slColor}">${slPct}% start</div>
+            <div class="start-likelihood">
+                <span style="color:${slColor}">${slPct}% start</span>
+                <span style="color:${emColor}">${emPct}% min</span>
+            </div>
             <div class="breakdown">
                 <span>S:${p.season_avg.toFixed(1)}</span>
                 <span>F:${p.form_score.toFixed(1)}</span>
@@ -572,6 +583,7 @@ function renderTable() {
             <td>£${p.cost.toFixed(1)}m</td>
             <td style="color:#00ff87;font-weight:600">${p.predicted_points.toFixed(1)}</td>
             <td style="color:${slColor}">${slPct}%</td>
+            <td style="color:${startColor(p.exp_minutes)}">${Math.round(p.exp_minutes * 100)}%</td>
             <td style="color:${fixtureColor(p.fixture_ease)}">${fixtureLabel(p.fixture_ease)}</td>
             <td style="color:#a78bfa;font-weight:600">${p.ep_next != null ? p.ep_next.toFixed(1) : '-'}</td>
             <td>${p.season_avg.toFixed(1)}</td>

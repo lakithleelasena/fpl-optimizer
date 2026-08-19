@@ -26,7 +26,7 @@ from models import (
     TransferSuggestion,
 )
 from backtest import compute_backtest
-from config import W_FIXTURE, W_FORM, W_HOME_AWAY, W_SEASON, W_THREAT, W_XGC, W_XGI
+from config import W_FIXTURE, W_FORM, W_HOME_AWAY, W_ODDS_WEIGHT, W_SEASON, W_THREAT, W_XGC, W_XGI
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
 
@@ -44,12 +44,12 @@ async def index(request: Request):
     return resp
 
 
-def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict) -> dict:
+def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict, odds_weight: float = W_ODDS_WEIGHT) -> dict:
     """Return a copy of player with opponents/strengths/n_fixtures restricted to GW1 only."""
-    return _gwN_player(player, upcoming_gws[0] if upcoming_gws else None, team_strengths)
+    return _gwN_player(player, upcoming_gws[0] if upcoming_gws else None, team_strengths, odds_weight)
 
 
-def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
+def _gwN_player(player: dict, gw_id, team_strengths: dict, odds_weight: float = W_ODDS_WEIGHT) -> dict:
     """Return a copy of player with fixture context set for a specific GW."""
     if gw_id is None:
         return player
@@ -58,6 +58,15 @@ def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
     is_home = player.get("gw_home", {}).get(gw_id, 0.5)
     fdr_ease = player.get("gw_ease", {}).get(gw_id)
     gw_xg = player.get("gw_match_xg", {}).get(gw_id, {})
+    # Blend Tier 1 (odds) with the model (Tier 2/3) when odds are available for this
+    # fixture; otherwise fall back to the model alone. Done per-request (not cached)
+    # so the odds_weight slider takes effect without needing a fresh data fetch.
+    if gw_xg.get("odds_team_xg") is not None:
+        match_team_xg = odds_weight * gw_xg["odds_team_xg"] + (1 - odds_weight) * gw_xg.get("model_team_xg", 0.0)
+        match_opp_xg = odds_weight * gw_xg["odds_opp_xg"] + (1 - odds_weight) * gw_xg.get("model_opp_xg", 0.0)
+    else:
+        match_team_xg = gw_xg.get("model_team_xg", 0.0)
+        match_opp_xg = gw_xg.get("model_opp_xg", 0.0)
     return {
         **player,
         "opponents": opps,
@@ -65,8 +74,8 @@ def _gwN_player(player: dict, gw_id, team_strengths: dict) -> dict:
         "n_fixtures": len(opps),
         "is_home": is_home,
         "_gw_ease": fdr_ease,
-        "match_team_xg": gw_xg.get("team_xg", 0.0),
-        "match_opp_xg": gw_xg.get("opp_xg", 0.0),
+        "match_team_xg": round(match_team_xg, 3),
+        "match_opp_xg": round(match_opp_xg, 3),
     }
 
 
@@ -103,6 +112,7 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "xg_score": prediction["xg_score"],
         "fixture_ease": prediction["fixture_ease"],
         "start_likelihood": prediction["start_likelihood"],
+        "exp_minutes": prediction["exp_minutes"],
         "form_score": prediction["form_score"],
         "threat_score": prediction["threat_score"],
         "xgc_score": prediction["xgc_score"],
@@ -132,6 +142,7 @@ def _to_player_out(p: dict) -> PlayerOut:
         xg_score=p["xg_score"],
         fixture_ease=p["fixture_ease"],
         start_likelihood=p["start_likelihood"],
+        exp_minutes=p.get("exp_minutes", 0.0),
         chance_of_playing=p.get("chance_of_playing"),
         minutes=p["minutes"],
         total_points=p["total_points"],
@@ -157,6 +168,7 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         xg_score=p["xg_score"],
         fixture_ease=p["fixture_ease"],
         start_likelihood=p["start_likelihood"],
+        exp_minutes=p.get("exp_minutes", 0.0),
         chance_of_playing=p.get("chance_of_playing"),
         minutes=p["minutes"],
         total_points=p["total_points"],
@@ -236,11 +248,12 @@ async def get_players(
     form_factor: float = 1.0,
     cs_factor: float = 1.0,
     atk_factor: float = 1.0,
+    odds_weight: float = W_ODDS_WEIGHT,
 ):
     data = await fetch_all_data()
     result = []
     for p in data["players"]:
-        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], odds_weight)
         pred = predict_points(
             p_gw1, w_home_away, w_season, w_xgi, w_fixture, w_form, w_threat, w_xgc,
             form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
@@ -258,7 +271,7 @@ async def run_optimize(req: OptimizeRequest):
 
     enriched = []
     for p in data["players"]:
-        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], req.odds_weight)
         pred_gw1 = predict_points(
             p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
             form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
@@ -268,7 +281,7 @@ async def run_optimize(req: OptimizeRequest):
 
         gw_pts = []
         for gw_id in data["upcoming_gws"]:
-            p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
+            p_gwN = _gwN_player(p, gw_id, data["team_strengths"], req.odds_weight)
             pred_gwN = predict_points(
                 p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
                 form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
@@ -341,7 +354,7 @@ async def get_transfer_advice(req: TransferRequest):
     # LP objective = total across all upcoming GWs.
     enriched = []
     for p in data["players"]:
-        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"])
+        p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], req.odds_weight)
         pred_gw1 = predict_points(
             p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
             form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
@@ -351,7 +364,7 @@ async def get_transfer_advice(req: TransferRequest):
 
         gw_pts = []
         for gw_id in data["upcoming_gws"]:
-            p_gwN = _gwN_player(p, gw_id, data["team_strengths"])
+            p_gwN = _gwN_player(p, gw_id, data["team_strengths"], req.odds_weight)
             pred_gwN = predict_points(
                 p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
                 form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
