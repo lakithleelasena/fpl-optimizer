@@ -27,8 +27,6 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#btn-optimize").addEventListener("click", runOptimize);
     $("#search").addEventListener("input", renderTable);
     $("#btn-transfer-advice").addEventListener("click", runTransferAdvice);
-    $("#btn-backtest").addEventListener("click", runBacktest);
-    $("#btn-apply-weights").addEventListener("click", applyBestWeights);
     $("#btn-team-xg-backtest").addEventListener("click", runTeamXgBacktest);
     $("#btn-player-points-backtest").addEventListener("click", runPlayerPointsBacktest);
 
@@ -612,122 +610,6 @@ function sortTable(key) {
     renderTable();
 }
 
-// ─── Backtest ─────────────────────────────────────────────────────────────────
-
-let bestWeightsFound = null;
-
-function getSelectedSignals() {
-    return Array.from($$(".signal-check input:checked")).map(el => el.value);
-}
-
-async function runBacktest() {
-    const btn = $("#btn-backtest");
-    btn.disabled = true;
-    btn.textContent = "Running… (may take 5–15s)";
-    $("#backtest-results").classList.add("hidden");
-
-    const signals = getSelectedSignals();
-    if (signals.length === 0) {
-        alert("Please select at least one signal.");
-        btn.disabled = false;
-        btn.textContent = "Run Backtest";
-        return;
-    }
-
-    try {
-        const resp = await fetch(`/api/backtest?signals=${signals.join(",")}`);
-        if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.detail || "Server error");
-        }
-        const data = await resp.json();
-        renderBacktest(data);
-    } catch (e) {
-        alert(`Backtest failed: ${e.message}`);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "Run Backtest";
-    }
-}
-
-function renderBacktest(data) {
-    bestWeightsFound = data.best;
-
-    // Summary cards
-    $("#bt-best-mae").textContent = data.best_mae.toFixed(4);
-    $("#bt-default-mae").textContent = data.default_mae.toFixed(4);
-    const impEl = $("#bt-improvement");
-    const imp = data.improvement_pct;
-    impEl.textContent = `${imp > 0 ? "+" : ""}${imp.toFixed(1)}%`;
-    impEl.style.color = imp > 0 ? "#00ff87" : imp < 0 ? "#ff6b6b" : "#e0e0e0";
-    $("#bt-gws").textContent = data.gameweeks.length;
-    $("#bt-datapoints").textContent = data.total_data_points.toLocaleString();
-    $("#bt-combos").textContent = data.total_combinations_tested;
-
-    // Best weights banner
-    const b = data.best;
-    $("#bt-best-weights").innerHTML = `
-        <div class="best-weights-row">
-            <div class="bw-chip"><span class="bw-label">H/A</span><span class="bw-val">${b.w_home_away.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Season Avg</span><span class="bw-val">${b.w_season.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">xGI</span><span class="bw-val">${b.w_xgi.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Fixture</span><span class="bw-val">${b.w_fixture.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Form</span><span class="bw-val">${b.w_form.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">Threat</span><span class="bw-val">${b.w_threat.toFixed(2)}</span></div>
-            <div class="bw-chip"><span class="bw-label">xGC</span><span class="bw-val">${b.w_xgc.toFixed(2)}</span></div>
-            <div class="bw-chip bw-mae"><span class="bw-label">MAE</span><span class="bw-val">${b.mae.toFixed(4)}</span></div>
-        </div>`;
-
-    // Per-GW chart
-    $("#bt-gw-chart").innerHTML = lineChart(
-        [
-            { label: "Best weights", color: "#00ff87", data: data.per_gw_best },
-            { label: "Default weights", color: "#f5a623", data: data.per_gw_default },
-        ],
-        data.gameweeks
-    );
-
-    // Sensitivity
-    const sens = data.sensitivity;
-    $("#bt-sensitivity").innerHTML = [
-        sensitivityChart(sens.w_home_away, "Home/Away Weight"),
-        sensitivityChart(sens.w_season,    "Season Avg Weight"),
-        sensitivityChart(sens.w_xgi,       "xG Involvement Weight"),
-        sensitivityChart(sens.w_fixture,   "Fixture Difficulty Weight"),
-        sensitivityChart(sens.w_form,      "Form Weight"),
-        sensitivityChart(sens.w_threat,    "ICT Threat Weight"),
-        sensitivityChart(sens.w_xgc,       "xGC (Clean Sheet) Weight"),
-    ].join("");
-
-    // Top combos table
-    const defaultW = [0.05, 0.20, 0.10, 0.35, 0.10, 0.10, 0.20];
-    $("#bt-combos-body").innerHTML = data.top_combinations.map((c, i) => {
-        const isDefault = Math.abs(c.w_home_away - defaultW[0]) < 0.01 &&
-                          Math.abs(c.w_season     - defaultW[1]) < 0.01 &&
-                          Math.abs(c.w_xgi        - defaultW[2]) < 0.01 &&
-                          Math.abs(c.w_fixture    - defaultW[3]) < 0.01 &&
-                          Math.abs(c.w_form       - defaultW[4]) < 0.01 &&
-                          Math.abs(c.w_threat     - defaultW[5]) < 0.01 &&
-                          Math.abs(c.w_xgc        - defaultW[6]) < 0.01;
-        const isBest = i === 0;
-        const cls = isBest ? "row-best" : isDefault ? "row-default" : "";
-        return `<tr class="${cls}">
-            <td>${i + 1}${isBest ? " 🏆" : isDefault ? " (default)" : ""}</td>
-            <td>${c.w_home_away.toFixed(2)}</td>
-            <td>${c.w_season.toFixed(2)}</td>
-            <td>${c.w_xgi.toFixed(2)}</td>
-            <td>${c.w_fixture.toFixed(2)}</td>
-            <td>${c.w_form.toFixed(2)}</td>
-            <td>${c.w_threat.toFixed(2)}</td>
-            <td>${c.w_xgc.toFixed(2)}</td>
-            <td style="color:#00ff87;font-weight:700">${c.mae.toFixed(4)}</td>
-        </tr>`;
-    }).join("");
-
-    $("#backtest-results").classList.remove("hidden");
-    $("#backtest-results").scrollIntoView({ behavior: "smooth" });
-}
-
 // ─── Prediction Accuracy: Team xG backtest ────────────────────────────────────
 
 async function runTeamXgBacktest() {
@@ -853,43 +735,6 @@ function renderPlayerPointsBacktest(data) {
 
     $("#player-points-results").classList.remove("hidden");
     $("#player-points-results").scrollIntoView({ behavior: "smooth" });
-}
-
-function applyBestWeights() {
-    if (!bestWeightsFound) return;
-    const b = bestWeightsFound;
-    const selectedSignals = getSelectedSignals();
-
-    const setSlider = (id, val) => {
-        const el = $(`#${id}`);
-        if (el) { el.value = val; el.dispatchEvent(new Event("input")); }
-    };
-
-    // Signal → slider id mapping
-    const signalToSlider = {
-        home_away: "w-home-away",
-        season:    "w-season",
-        xgi:       "w-xgi",
-        fixture:   "w-fixture",
-        form:      "w-form",
-        threat:    "w-threat",
-        xgc:       "w-xgc",
-    };
-
-    // Apply best weight if signal was selected, otherwise zero it out
-    setSlider("w-home-away", selectedSignals.includes("home_away") ? b.w_home_away : 0);
-    setSlider("w-season",    selectedSignals.includes("season")    ? b.w_season    : 0);
-    setSlider("w-xgi",       selectedSignals.includes("xgi")       ? b.w_xgi       : 0);
-    setSlider("w-fixture",   selectedSignals.includes("fixture")   ? b.w_fixture   : 0);
-    setSlider("w-form",      selectedSignals.includes("form")      ? b.w_form      : 0);
-    setSlider("w-threat",    selectedSignals.includes("threat")    ? b.w_threat    : 0);
-    setSlider("w-xgc",       selectedSignals.includes("xgc")       ? b.w_xgc       : 0);
-
-    // Switch to optimizer tab
-    $$(".tab-btn").forEach(btn => btn.classList.remove("active"));
-    $$(".tab-content").forEach(c => c.classList.add("hidden"));
-    $(".tab-btn[data-tab='optimizer']").classList.add("active");
-    $("#tab-optimizer").classList.remove("hidden");
 }
 
 // ─── Team Overview & Fixture Tracker ─────────────────────────────────────────
@@ -1093,27 +938,3 @@ function lineChart(seriesList, gws) {
     return svg;
 }
 
-// ─── Sensitivity bar chart ────────────────────────────────────────────────────
-
-function sensitivityChart(data, title) {
-    const maes = data.map(d => d.mae);
-    const minMae = Math.min(...maes);
-    const maxMae = Math.max(...maes);
-    const range = maxMae - minMae || 1;
-
-    let html = `<div class="sens-chart-card"><div class="sens-chart-title">${title}</div>`;
-    html += data.map(d => {
-        const normalized = (d.mae - minMae) / range; // 0=best, 1=worst
-        const barW = Math.max(4, Math.round((1 - normalized) * 100));
-        const color = normalized < 0.33 ? "#00ff87" : normalized < 0.66 ? "#f5a623" : "#ff6b6b";
-        const isBest = d.mae === minMae;
-        return `
-        <div class="sens-row${isBest ? " sens-best" : ""}">
-            <span class="sens-val">${d.value.toFixed(1)}</span>
-            <div class="sens-bar-wrap"><div class="sens-bar" style="width:${barW}%;background:${color}"></div></div>
-            <span class="sens-mae">${d.mae.toFixed(4)}</span>
-        </div>`;
-    }).join("");
-    html += "</div>";
-    return html;
-}

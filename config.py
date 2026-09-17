@@ -38,22 +38,10 @@ MAX_PER_TEAM = 3
 # bench cover than a cheap fringe player who might actually get minutes.
 BENCH_WEIGHT = 0.2
 
-W_HOME_AWAY = 0.05
-W_SEASON = 0.20
-W_XGI = 0.10
-W_FIXTURE = 0.35
-W_FORM = 0.10
-W_THREAT = 0.10
-W_XGC = 0.20
-
 # New formula multipliers (1.0 = neutral)
 W_FORM_FACTOR = 1.0   # scales form adjustment (0 = ignore form, 2 = double sensitivity)
 W_CS_FACTOR   = 1.0   # scales clean-sheet bonus for GKP/DEF
 W_ATK_FACTOR  = 1.0   # scales goal/assist contribution for MID/FWD (and rare DEF/GKP goals)
-
-# FPL team strength rating bounds — 2026-27 API uses 1-5 integer scale
-STRENGTH_MIN = 2
-STRENGTH_MAX = 5
 
 SEMAPHORE_LIMIT = 20
 CACHE_TTL_SECONDS = 1800  # 30 minutes

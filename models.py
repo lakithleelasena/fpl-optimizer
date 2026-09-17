@@ -6,15 +6,6 @@ from pydantic import BaseModel
 class OptimizeRequest(BaseModel):
     budget: int = 1000
     n_gw: int = 1
-    # Legacy weights (backtest path only)
-    w_home_away: float = 0.05
-    w_season: float = 0.20
-    w_xgi: float = 0.10
-    w_fixture: float = 0.35
-    w_form: float = 0.10
-    w_threat: float = 0.10
-    w_xgc: float = 0.20
-    # New formula factors
     form_factor: float = 1.0
     cs_factor: float = 1.0
     atk_factor: float = 1.0
@@ -69,15 +60,6 @@ class TransferRequest(BaseModel):
     budget_in_bank: int = 0
     chips_available: List[str] = []
     n_gw: int = 3
-    # Legacy weights (backtest path only)
-    w_home_away: float = 0.05
-    w_season: float = 0.20
-    w_xgi: float = 0.10
-    w_fixture: float = 0.35
-    w_form: float = 0.10
-    w_threat: float = 0.10
-    w_xgc: float = 0.20
-    # New formula factors
     form_factor: float = 1.0
     cs_factor: float = 1.0
     atk_factor: float = 1.0

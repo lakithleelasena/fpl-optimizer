@@ -23,7 +23,6 @@
             <button class="tab-btn" data-tab="players">All Player Predictions</button>
             <button class="tab-btn" data-tab="teams">Team Overview</button>
             <button class="tab-btn" data-tab="fixtures">Fixture Tracker</button>
-            <button class="tab-btn" data-tab="backtest">Backtest</button>
             <button class="tab-btn" data-tab="accuracy">Prediction Accuracy</button>
         </div>
 
@@ -331,109 +330,6 @@
                         <div class="loading"><span class="spinner"></span>Loading...</div>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <!-- ===== TAB: Backtest ===== -->
-        <div class="tab-content hidden" id="tab-backtest">
-            <div class="section-card">
-                <h2>Weight Backtest</h2>
-                <p class="section-hint">
-                    Tests all 7-weight combinations (0.0–1.0 in 0.1 steps, normalised to sum=1) across every completed
-                    gameweek using only data available before each week. Lower MAE = better prediction accuracy.
-                </p>
-                <div class="signal-selector">
-                    <label class="signal-selector-label">Signals to include:</label>
-                    <div class="signal-checks">
-                        <label class="signal-check"><input type="checkbox" value="home_away" checked> Home/Away</label>
-                        <label class="signal-check"><input type="checkbox" value="season" checked> Season Avg</label>
-                        <label class="signal-check"><input type="checkbox" value="xgi" checked> xG Involvement <small>(MID/FWD)</small></label>
-                        <label class="signal-check"><input type="checkbox" value="fixture" checked> Fixture Difficulty</label>
-                        <label class="signal-check"><input type="checkbox" value="form" checked> Form</label>
-                        <label class="signal-check"><input type="checkbox" value="threat" checked> ICT Threat <small>(MID/FWD)</small></label>
-                        <label class="signal-check"><input type="checkbox" value="xgc" checked> xGC Clean Sheet <small>(GKP/DEF)</small></label>
-                    </div>
-                </div>
-                <button class="btn-optimize" id="btn-backtest" style="max-width:220px">Run Backtest</button>
-            </div>
-
-            <div id="backtest-results" class="hidden">
-
-                <!-- Summary cards -->
-                <div class="summary" id="bt-summary">
-                    <div class="summary-card">
-                        <div class="value" id="bt-best-mae">-</div>
-                        <div class="label">Best MAE Found</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-default-mae">-</div>
-                        <div class="label">Default Weights MAE</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-improvement">-</div>
-                        <div class="label">Improvement</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-gws">-</div>
-                        <div class="label">Gameweeks Tested</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-datapoints">-</div>
-                        <div class="label">Data Points</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="value" id="bt-combos">-</div>
-                        <div class="label">Combos Tested</div>
-                    </div>
-                </div>
-
-                <!-- Best weights banner -->
-                <div class="section-card" id="bt-best-card">
-                    <h2>Optimal Weights Found</h2>
-                    <div id="bt-best-weights"></div>
-                    <button class="btn-apply-weights" id="btn-apply-weights">Apply to Optimizer &amp; Transfers</button>
-                </div>
-
-                <!-- Per-GW MAE chart -->
-                <div class="section-card">
-                    <h2>MAE per Gameweek</h2>
-                    <div class="chart-legend">
-                        <span class="legend-dot" style="background:#00ff87"></span> Best weights &nbsp;
-                        <span class="legend-dot" style="background:#f5a623"></span> Default weights
-                    </div>
-                    <div id="bt-gw-chart"></div>
-                </div>
-
-                <!-- Sensitivity charts -->
-                <div class="section-card">
-                    <h2>Weight Sensitivity</h2>
-                    <p class="section-hint">For each weight value (0.0–1.0), the best MAE achievable with that value fixed (others free). Lower = better.</p>
-                    <div class="sens-grid" id="bt-sensitivity"></div>
-                </div>
-
-                <!-- Top combinations table -->
-                <div class="section-card">
-                    <h2>Top 20 Weight Combinations</h2>
-                    <div style="overflow-x:auto">
-                        <table class="players-table" id="bt-combos-table">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>H/A</th>
-                                    <th>Season Avg</th>
-                                    <th>xGI</th>
-                                    <th>Fixture</th>
-                                    <th>Form</th>
-                                    <th>Threat</th>
-                                    <th>xGC</th>
-                                    <th>MAE</th>
-                                </tr>
-                            </thead>
-                            <tbody id="bt-combos-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
             </div>
         </div>
 

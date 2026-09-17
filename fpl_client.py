@@ -374,7 +374,6 @@ async def fetch_all_data() -> dict:
         tasks = [_fetch_player_history(client, sem, p["id"]) for p in active_players]
         results = await asyncio.gather(*tasks)
 
-        pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}
         team_lookup = {p["id"]: p["team"] for p in active_players}
 
         player_stats: dict[int, dict] = {}
@@ -389,11 +388,6 @@ async def fetch_all_data() -> dict:
                     "minutes": h["minutes"],
                     "opponent_team": h["opponent_team"],
                     "was_home": h.get("was_home", False),
-                    "xgi": float(h.get("expected_goal_involvements") or 0),
-                    "threat": float(h.get("threat") or 0),
-                    "xgc": float(h.get("expected_goals_conceded") or 0),
-                    "position": pos_lookup.get(player_id, "MID"),
-                    # Backtest-only fields (accuracy screen) — unused by the legacy backtest
                     "goals_scored": h.get("goals_scored", 0),
                     "assists": h.get("assists", 0),
                     "saves": h.get("saves", 0),

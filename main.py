@@ -25,9 +25,8 @@ from models import (
     TransferRequest,
     TransferSuggestion,
 )
-from backtest import compute_backtest
 from backtest_accuracy import compute_player_points_backtest, compute_team_xg_backtest
-from config import W_FIXTURE, W_FORM, W_HOME_AWAY, W_ODDS_WEIGHT, W_SEASON, W_THREAT, W_XGC, W_XGI
+from config import W_ODDS_WEIGHT
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
 
@@ -245,13 +244,6 @@ async def get_next_gw():
 
 @app.get("/api/players", response_model=List[PlayerOut])
 async def get_players(
-    w_home_away: float = W_HOME_AWAY,
-    w_season: float = W_SEASON,
-    w_xgi: float = W_XGI,
-    w_fixture: float = W_FIXTURE,
-    w_form: float = W_FORM,
-    w_threat: float = W_THREAT,
-    w_xgc: float = W_XGC,
     form_factor: float = 1.0,
     cs_factor: float = 1.0,
     atk_factor: float = 1.0,
@@ -262,8 +254,7 @@ async def get_players(
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], odds_weight)
         pred = predict_points(
-            p_gw1, w_home_away, w_season, w_xgi, w_fixture, w_form, w_threat, w_xgc,
-            form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
+            p_gw1, form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
         )
         result.append(_build_player_out(p_gw1, pred))
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
@@ -280,8 +271,7 @@ async def run_optimize(req: OptimizeRequest):
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], req.odds_weight)
         pred_gw1 = predict_points(
-            p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
-            form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+            p_gw1, form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
         )
         out = _build_player_out(p_gw1, pred_gw1)
         out["cost"] = p["cost"]  # keep raw cost for optimizer
@@ -290,8 +280,7 @@ async def run_optimize(req: OptimizeRequest):
         for gw_id in data["upcoming_gws"]:
             p_gwN = _gwN_player(p, gw_id, data["team_strengths"], req.odds_weight)
             pred_gwN = predict_points(
-                p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
-                form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+                p_gwN, form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
             )
             n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
             gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
@@ -363,8 +352,7 @@ async def get_transfer_advice(req: TransferRequest):
     for p in data["players"]:
         p_gw1 = _gw1_player(p, data["upcoming_gws"], data["team_strengths"], req.odds_weight)
         pred_gw1 = predict_points(
-            p_gw1, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
-            form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+            p_gw1, form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
         )
         out = _build_player_out(p_gw1, pred_gw1)
         out["cost"] = p["cost"]
@@ -373,8 +361,7 @@ async def get_transfer_advice(req: TransferRequest):
         for gw_id in data["upcoming_gws"]:
             p_gwN = _gwN_player(p, gw_id, data["team_strengths"], req.odds_weight)
             pred_gwN = predict_points(
-                p_gwN, req.w_home_away, req.w_season, req.w_xgi, req.w_fixture, req.w_form, req.w_threat, req.w_xgc,
-                form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
+                p_gwN, form_factor=req.form_factor, cs_factor=req.cs_factor, atk_factor=req.atk_factor,
             )
             n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
             gw_pts.append(round(pred_gwN["predicted_points"] * n_fix, 2))
@@ -425,24 +412,6 @@ async def get_transfer_advice(req: TransferRequest):
         n_gw=req.n_gw,
         upcoming_gws=data["upcoming_gws"][:req.n_gw],
     )
-
-
-@app.get("/api/backtest")
-async def run_backtest(request: Request):
-    signals = request.query_params.get("signals")
-    data = await fetch_all_data()
-    active_signals = [s.strip() for s in signals.split(",")] if signals else None
-    try:
-        result = await asyncio.to_thread(
-            compute_backtest,
-            data["raw_histories"],
-            data["team_strengths"],
-            data["next_gw"],
-            active_signals,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return result
 
 
 @app.get("/api/backtest/team-xg")
