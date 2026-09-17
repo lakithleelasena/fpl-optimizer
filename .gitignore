@@ -6,3 +6,5 @@ __pycache__/
 venv/
 *.log
 .DS_Store
+FPL.env.quickcode
+odds_cache.json
