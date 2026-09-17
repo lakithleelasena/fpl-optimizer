@@ -24,6 +24,7 @@
             <button class="tab-btn" data-tab="teams">Team Overview</button>
             <button class="tab-btn" data-tab="fixtures">Fixture Tracker</button>
             <button class="tab-btn" data-tab="backtest">Backtest</button>
+            <button class="tab-btn" data-tab="accuracy">Prediction Accuracy</button>
         </div>
 
         <!-- ===== TAB: Squad Optimizer ===== -->
@@ -267,13 +268,14 @@
                                 <th onclick="sortTable('fixture_ease')">Fixture</th>
                                 <th onclick="sortTable('ep_next')">FPL ep_next</th>
                                 <th onclick="sortTable('season_avg')">Season</th>
+                                <th onclick="sortTable('total_points')" title="Actual points scored so far this season">Total Pts</th>
                                 <th onclick="sortTable('form_score')">Form</th>
                                 <th onclick="sortTable('xg_score')" title="Expected goal involvement per match">Plyr xG</th>
                                 <th>Add</th>
                             </tr>
                         </thead>
                         <tbody id="table-body">
-                            <tr><td colspan="13" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                            <tr><td colspan="14" class="loading"><span class="spinner"></span>Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -433,6 +435,100 @@
                 </div>
 
             </div>
+        </div>
+
+        <!-- ===== TAB: Prediction Accuracy ===== -->
+        <div class="tab-content hidden" id="tab-accuracy">
+
+            <!-- Team xG Accuracy -->
+            <div class="section-card">
+                <h2>Team Expected Goals — Predicted vs Actual</h2>
+                <p class="section-hint">
+                    Scores Tier 1 (odds), Tier 2 (rolling form), Tier 3 (FDR fallback), and the
+                    production blend separately against actual goals scored, for every completed
+                    gameweek — using only data available before each week. Tier 1 will be blank
+                    or sparse for early gameweeks since historical odds only started being
+                    archived from GW5 onward; it fills in as more weeks complete.
+                </p>
+                <button class="btn-optimize" id="btn-team-xg-backtest" style="max-width:260px">Run Team xG Backtest</button>
+
+                <div id="team-xg-results" class="hidden">
+                    <div class="chart-legend" id="team-xg-legend"></div>
+                    <div id="team-xg-chart"></div>
+                    <p class="section-hint" id="team-xg-samples"></p>
+
+                    <div style="overflow-x:auto;margin-top:16px">
+                        <table class="players-table" id="team-xg-table">
+                            <thead>
+                                <tr>
+                                    <th>GW</th><th>Team</th><th>Opp</th><th>H/A</th>
+                                    <th>Tier 1</th><th>Tier 2</th><th>Tier 3</th><th>Production</th><th>Actual</th>
+                                </tr>
+                            </thead>
+                            <tbody id="team-xg-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Player Points Accuracy -->
+            <div class="section-card">
+                <h2>Player Points — Predicted vs Actual</h2>
+                <p class="section-hint">
+                    Full predicted-points formula vs actual points scored, per player per completed
+                    gameweek, built on top of the team xG backtest above. Uses only data available
+                    before each gameweek; players with no prior appearances that season are excluded
+                    (no pre-season fallback attempted here). "Form" is approximated as a trailing
+                    4-game points average since FPL's own form stat isn't retrievable historically.
+                </p>
+                <div class="signal-selector">
+                    <label class="signal-selector-label">Goal/Assist share window:</label>
+                    <div class="signal-checks">
+                        <label class="signal-check"><input type="radio" name="share-window" value="1"> Last 1 game</label>
+                        <label class="signal-check"><input type="radio" name="share-window" value="3"> Last 3 games</label>
+                        <label class="signal-check"><input type="radio" name="share-window" value="6" checked> Last 6 games</label>
+                    </div>
+                </div>
+                <button class="btn-optimize" id="btn-player-points-backtest" style="max-width:260px">Run Player Points Backtest</button>
+
+                <div id="player-points-results" class="hidden">
+                    <div class="summary" id="pp-summary">
+                        <div class="summary-card">
+                            <div class="value" id="pp-overall-mae">-</div>
+                            <div class="label">Overall MAE</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="value" id="pp-starters-mae">-</div>
+                            <div class="label">Starters-only MAE</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="value" id="pp-predictions">-</div>
+                            <div class="label">Predictions Scored</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="value" id="pp-skipped">-</div>
+                            <div class="label">Skipped (no prior data)</div>
+                        </div>
+                    </div>
+
+                    <div class="chart-legend" id="pp-legend"></div>
+                    <div id="pp-chart"></div>
+
+                    <div style="overflow-x:auto;margin-top:16px">
+                        <h2 style="font-size:16px">Biggest Misses</h2>
+                        <table class="players-table" id="pp-misses-table">
+                            <thead>
+                                <tr>
+                                    <th>GW</th><th>Player</th><th>Team</th><th>Pos</th>
+                                    <th>Predicted</th><th>Actual</th><th>Error</th><th>Started</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pp-misses-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
 

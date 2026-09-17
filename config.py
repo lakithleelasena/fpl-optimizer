@@ -30,6 +30,14 @@ MIN_STARTING = {"GKP": 1, "DEF": 3, "MID": 2, "FWD": 1}
 
 MAX_PER_TEAM = 3
 
+# Objective weight on bench (non-starting) squad members' predicted points.
+# Starters are weighted 1.0; this must stay well below that so bench quality
+# never outbids a genuine starting-XI improvement. But it must be large enough
+# to stop the LP treating bench slots as pure budget filler — bench players
+# can be auto-subbed in if a starter blanks, so a 0%-chance player is worse
+# bench cover than a cheap fringe player who might actually get minutes.
+BENCH_WEIGHT = 0.2
+
 W_HOME_AWAY = 0.05
 W_SEASON = 0.20
 W_XGI = 0.10

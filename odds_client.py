@@ -2,7 +2,10 @@
 
 Results are cached to odds_cache.json keyed by gameweek — only one live
 API call is made per round. Returns empty dict when ODDS_API_KEY is not
-configured so callers fall back to Tier 2/3 automatically.
+configured so callers fall back to Tier 2/3 automatically. If a live call
+fails (e.g. free-tier quota exhausted mid-query) or returns no usable data,
+the last successfully saved odds for the current gameweek are served instead
+— the cache file is only ever overwritten by a successful fetch.
 """
 from __future__ import annotations
 
@@ -15,14 +18,20 @@ import httpx
 from config import ODDS_API_KEY, ODDS_API_URL
 
 ODDS_CACHE_FILE = "odds_cache.json"
+# Historical archive: {gw_str: {fetched_at, data}} — one entry per gameweek,
+# kept forever (never overwritten by a later GW) so future backtests can see
+# what the market actually said at the time. Updated in place if a gameweek's
+# odds are re-fetched before kickoff; the live single-GW cache above is
+# unaffected by this and keeps working exactly as before.
+ODDS_HISTORY_FILE = "odds_history.json"
 
 # Common FPL name → list of Odds API name variants
 _FPL_ALIASES: dict[str, list[str]] = {
     "Man Utd":        ["Manchester United"],
     "Man City":       ["Manchester City"],
     "Newcastle Utd":  ["Newcastle United"],
-    "Nottm Forest":   ["Nottingham Forest"],
-    "Tottenham":      ["Tottenham Hotspur"],
+    "Nott'm Forest":  ["Nottingham Forest"],
+    "Spurs":          ["Tottenham Hotspur"],
     "Brighton":       ["Brighton and Hove Albion", "Brighton & Hove Albion"],
     "Wolves":         ["Wolverhampton Wanderers"],
     "West Ham":       ["West Ham United"],
@@ -97,6 +106,51 @@ def _save_odds_cache(gw_id: int, data: dict) -> None:
     }
     with open(ODDS_CACHE_FILE, "w") as f:
         json.dump(payload, f, indent=2)
+
+
+def _archive_odds_snapshot(gw_id: int, data: dict) -> None:
+    """Record this gameweek's odds in the permanent historical archive, keyed
+    by GW so past gameweeks are never lost when later ones are fetched. Safe
+    to call repeatedly for the same GW (e.g. re-refreshed before kickoff) —
+    that GW's entry is just replaced with the newest snapshot each time."""
+    history: dict = {}
+    if os.path.exists(ODDS_HISTORY_FILE):
+        try:
+            with open(ODDS_HISTORY_FILE) as f:
+                history = json.load(f)
+        except Exception:
+            history = {}
+
+    serializable = {
+        str(fid): {str(tid): list(vals) for tid, vals in teams.items()}
+        for fid, teams in data.items()
+    }
+    history[str(gw_id)] = {
+        "fetched_at": datetime.utcnow().isoformat(),
+        "data": serializable,
+    }
+
+    with open(ODDS_HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def load_odds_history() -> dict[int, dict]:
+    """Return the full historical odds archive as {gw: {fixture_id: {team_id: (team_xg, opp_xg)}}}.
+    Used by the backtest — GWs never fetched (e.g. before this feature existed) are simply absent."""
+    if not os.path.exists(ODDS_HISTORY_FILE):
+        return {}
+    try:
+        with open(ODDS_HISTORY_FILE) as f:
+            history = json.load(f)
+        return {
+            int(gw): {
+                int(fid): {int(tid): tuple(vals) for tid, vals in teams.items()}
+                for fid, teams in entry.get("data", {}).items()
+            }
+            for gw, entry in history.items()
+        }
+    except Exception:
+        return {}
 
 
 # ── Name matching ────────────────────────────────────────────────────────────
@@ -196,7 +250,10 @@ async def fetch_odds_xg(
             resp.raise_for_status()
             events: list[dict] = resp.json()
     except Exception:
-        return {}
+        # Live call failed (e.g. free-tier quota exhausted mid-query) — keep
+        # using the last successfully saved odds for this gameweek instead of
+        # losing them. Falls back to {} only if nothing was ever cached.
+        return load_odds_cache(current_gw) if current_gw else {}
 
     odds_map: dict[tuple[str, str], tuple[float, float]] = {}
     for event in events:
@@ -209,7 +266,7 @@ async def fetch_odds_xg(
                 break
 
     if not odds_map:
-        return {}
+        return load_odds_cache(current_gw) if current_gw else {}
 
     odds_names = list({n for pair in odds_map for n in pair})
     id_to_odds_name: dict[int, str] = {}
@@ -230,7 +287,11 @@ async def fetch_odds_xg(
                 result.setdefault(fid, {})[h_id] = (xg[0], xg[1])
                 result.setdefault(fid, {})[a_id] = (xg[1], xg[0])
 
-    if current_gw and result:
+    if not result:
+        return load_odds_cache(current_gw) if current_gw else {}
+
+    if current_gw:
         _save_odds_cache(current_gw, result)
+        _archive_odds_snapshot(current_gw, result)
 
     return result

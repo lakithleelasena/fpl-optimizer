@@ -26,6 +26,7 @@ from models import (
     TransferSuggestion,
 )
 from backtest import compute_backtest
+from backtest_accuracy import compute_player_points_backtest, compute_team_xg_backtest
 from config import W_FIXTURE, W_FORM, W_HOME_AWAY, W_ODDS_WEIGHT, W_SEASON, W_THREAT, W_XGC, W_XGI
 from optimizer import optimize_squad, recommend_transfers
 from predictor import predict_points
@@ -214,16 +215,22 @@ async def refresh_odds():
     data = await fetch_all_data()
     next_gw = data["next_gw"]
     upcoming_fix_list = [f for f in data["fixtures"] if f.get("event") in data["upcoming_gws"]]
+    meta_before = get_odds_cache_meta()
     odds = await fetch_odds_xg(
         data["teams"], upcoming_fix_list, current_gw=next_gw, force_refresh=True
     )
     if not odds:
         raise HTTPException(status_code=502, detail="Odds API returned no data — check key or try again later")
-    # Invalidate FPL cache so next prediction fetch uses updated odds
-    invalidate_cache()
     meta = get_odds_cache_meta()
+    # If the cache's fetched_at didn't move, the live call failed (e.g. quota
+    # exhausted) and fetch_odds_xg served the last saved odds as a fallback —
+    # report that honestly instead of claiming a fresh refresh succeeded.
+    is_stale = bool(meta_before) and meta_before.get("fetched_at") == (meta or {}).get("fetched_at")
+    if not is_stale:
+        # Invalidate FPL cache so next prediction fetch uses updated odds
+        invalidate_cache()
     return {
-        "status": "ok",
+        "status": "stale" if is_stale else "ok",
         "gameweek": next_gw,
         "fixtures_found": len(odds),
         "fetched_at": meta["fetched_at"] if meta else None,
@@ -435,6 +442,38 @@ async def run_backtest(request: Request):
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@app.get("/api/backtest/team-xg")
+async def run_team_xg_backtest():
+    """Tier 1 (odds) / Tier 2 (rolling) / Tier 3 (FDR) team xG, scored separately
+    against actual goals for every completed gameweek. Tier 1 will be sparse/empty
+    for gameweeks before odds history archiving started."""
+    data = await fetch_all_data()
+    result = await asyncio.to_thread(
+        compute_team_xg_backtest, data["fixtures"], data["teams"],
+    )
+    return result
+
+
+@app.get("/api/backtest/player-points")
+async def run_player_points_backtest(share_window: int = 6):
+    """Full predicted_points vs actual total_points per player per completed GW,
+    built on top of the team-xG backtest above. share_window: 1, 3, or 6 games."""
+    if share_window not in (1, 3, 6):
+        raise HTTPException(status_code=400, detail="share_window must be 1, 3, or 6")
+    data = await fetch_all_data()
+    player_meta = {p["id"]: p for p in data["players"]}
+
+    def _run():
+        team_result = compute_team_xg_backtest(data["fixtures"], data["teams"])
+        return compute_player_points_backtest(
+            data["raw_histories"], data["fixtures"], player_meta,
+            team_result["rows"], share_window=share_window,
+        )
+
+    result = await asyncio.to_thread(_run)
     return result
 
 

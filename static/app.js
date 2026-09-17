@@ -29,6 +29,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#btn-transfer-advice").addEventListener("click", runTransferAdvice);
     $("#btn-backtest").addEventListener("click", runBacktest);
     $("#btn-apply-weights").addEventListener("click", applyBestWeights);
+    $("#btn-team-xg-backtest").addEventListener("click", runTeamXgBacktest);
+    $("#btn-player-points-backtest").addEventListener("click", runPlayerPointsBacktest);
 
     // Position filter buttons
     $$(".filter-btn").forEach((btn) => {
@@ -587,6 +589,7 @@ function renderTable() {
             <td style="color:${fixtureColor(p.fixture_ease)}">${fixtureLabel(p.fixture_ease)}</td>
             <td style="color:#a78bfa;font-weight:600">${p.ep_next != null ? p.ep_next.toFixed(1) : '-'}</td>
             <td>${p.season_avg.toFixed(1)}</td>
+            <td>${p.total_points}</td>
             <td>${p.form_score.toFixed(1)}</td>
             <td>${p.xg_score.toFixed(1)}</td>
             <td>
@@ -725,6 +728,133 @@ function renderBacktest(data) {
     $("#backtest-results").scrollIntoView({ behavior: "smooth" });
 }
 
+// ─── Prediction Accuracy: Team xG backtest ────────────────────────────────────
+
+async function runTeamXgBacktest() {
+    const btn = $("#btn-team-xg-backtest");
+    btn.disabled = true;
+    btn.textContent = "Running…";
+    try {
+        const resp = await fetch("/api/backtest/team-xg");
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || "Server error");
+        }
+        const data = await resp.json();
+        renderTeamXgBacktest(data);
+    } catch (e) {
+        alert(`Team xG backtest failed: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Run Team xG Backtest";
+    }
+}
+
+function renderTeamXgBacktest(data) {
+    const gws = data.gameweeks;
+    const mae = data.mae_by_tier;
+
+    $("#team-xg-legend").innerHTML = `
+        <span class="legend-dot" style="background:#a78bfa"></span> Tier 1 (odds) &nbsp;
+        <span class="legend-dot" style="background:#f5a623"></span> Tier 2 (rolling) &nbsp;
+        <span class="legend-dot" style="background:#8b949e"></span> Tier 3 (FDR) &nbsp;
+        <span class="legend-dot" style="background:#00ff87"></span> Production blend
+    `;
+    $("#team-xg-chart").innerHTML = lineChart(
+        [
+            { label: "Tier 1", color: "#a78bfa", data: mae.tier1 },
+            { label: "Tier 2", color: "#f5a623", data: mae.tier2 },
+            { label: "Tier 3", color: "#8b949e", data: mae.tier3 },
+            { label: "Production", color: "#00ff87", data: mae.production },
+        ],
+        gws
+    );
+
+    const counts = data.sample_counts;
+    const countsStr = gws.map(gw => {
+        const t1 = counts.tier1[gw] || 0;
+        const t2 = counts.tier2[gw] || 0;
+        const t3 = counts.tier3[gw] || 0;
+        return `GW${gw}: Tier1=${t1}, Tier2=${t2}, Tier3=${t3} fixtures`;
+    }).join(" · ");
+    $("#team-xg-samples").textContent = `Sample sizes — ${countsStr}`;
+
+    $("#team-xg-body").innerHTML = [...data.rows]
+        .sort((a, b) => b.gw - a.gw || a.team.localeCompare(b.team))
+        .map(r => `
+        <tr>
+            <td>GW${r.gw}</td>
+            <td>${r.team}</td>
+            <td>${r.opponent}</td>
+            <td>${r.is_home ? "H" : "A"}</td>
+            <td>${r.tier1 != null ? r.tier1.toFixed(2) : "–"}</td>
+            <td>${r.tier2 != null ? r.tier2.toFixed(2) : "–"}</td>
+            <td>${r.tier3.toFixed(2)}</td>
+            <td style="font-weight:600">${r.production.toFixed(2)}</td>
+            <td style="color:#00ff87;font-weight:700">${r.actual_goals}</td>
+        </tr>`).join("");
+
+    $("#team-xg-results").classList.remove("hidden");
+    $("#team-xg-results").scrollIntoView({ behavior: "smooth" });
+}
+
+// ─── Prediction Accuracy: Player points backtest ──────────────────────────────
+
+async function runPlayerPointsBacktest() {
+    const btn = $("#btn-player-points-backtest");
+    const shareWindow = document.querySelector('input[name="share-window"]:checked').value;
+    btn.disabled = true;
+    btn.textContent = "Running…";
+    try {
+        const resp = await fetch(`/api/backtest/player-points?share_window=${shareWindow}`);
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || "Server error");
+        }
+        const data = await resp.json();
+        renderPlayerPointsBacktest(data);
+    } catch (e) {
+        alert(`Player points backtest failed: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Run Player Points Backtest";
+    }
+}
+
+function renderPlayerPointsBacktest(data) {
+    $("#pp-overall-mae").textContent = data.overall_mae.toFixed(3);
+    $("#pp-starters-mae").textContent = data.starters_only_mae.toFixed(3);
+    $("#pp-predictions").textContent = data.total_predictions.toLocaleString();
+    $("#pp-skipped").textContent = data.skipped_no_prior_data.toLocaleString();
+
+    const posColors = { GKP: "#a78bfa", DEF: "#f5a623", MID: "#00ff87", FWD: "#ff6b6b" };
+    $("#pp-legend").innerHTML = Object.entries(posColors)
+        .map(([pos, color]) => `<span class="legend-dot" style="background:${color}"></span> ${pos} &nbsp;`)
+        .join("");
+
+    $("#pp-chart").innerHTML = lineChart(
+        Object.entries(posColors).map(([pos, color]) => ({
+            label: pos, color, data: data.mae_by_position_per_gw[pos],
+        })),
+        data.gameweeks
+    );
+
+    $("#pp-misses-body").innerHTML = data.biggest_misses.map(r => `
+        <tr>
+            <td>GW${r.gw}</td>
+            <td>${r.name}</td>
+            <td>${r.team}</td>
+            <td>${r.position}</td>
+            <td>${r.predicted.toFixed(2)}</td>
+            <td style="color:#00ff87;font-weight:700">${r.actual}</td>
+            <td style="color:${r.error < 0 ? '#ff6b6b' : '#f5a623'};font-weight:600">${r.error > 0 ? "+" : ""}${r.error.toFixed(2)}</td>
+            <td>${r.started ? "Yes" : "No"}</td>
+        </tr>`).join("");
+
+    $("#player-points-results").classList.remove("hidden");
+    $("#player-points-results").scrollIntoView({ behavior: "smooth" });
+}
+
 function applyBestWeights() {
     if (!bestWeightsFound) return;
     const b = bestWeightsFound;
@@ -798,6 +928,9 @@ async function refreshOdds() {
         if (!resp.ok) throw new Error(body.detail || `Error ${resp.status}`);
         _teamsData = null;
         await loadTeams(true);
+        if (body.status === "stale") {
+            alert("Live odds refresh failed (quota limit or API error) — still showing the last saved odds, no data was lost. Try again later.");
+        }
     } catch (e) {
         alert("Odds refresh failed: " + e.message);
     } finally {

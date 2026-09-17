@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pulp
 
-from config import MAX_PER_TEAM, MIN_STARTING, SQUAD_COMPOSITION, SQUAD_SIZE, STARTING_XI
+from config import BENCH_WEIGHT, MAX_PER_TEAM, MIN_STARTING, SQUAD_COMPOSITION, SQUAD_SIZE, STARTING_XI
 
 
 def optimize_squad(players: list[dict], budget: int = 1000) -> dict:
@@ -13,13 +13,14 @@ def optimize_squad(players: list[dict], budget: int = 1000) -> dict:
     x = [pulp.LpVariable(f"squad_{i}", cat="Binary") for i in range(n)]
     y = [pulp.LpVariable(f"start_{i}", cat="Binary") for i in range(n)]
 
-    # Objective: maximize predicted points of starters (primary),
-    # with a tiny secondary term to prefer higher-quality bench and
-    # encourage spending up to the budget limit.
-    epsilon = 0.001
+    # Objective: maximize predicted points of starters (primary), with a
+    # secondary term (BENCH_WEIGHT) that values bench quality too — bench
+    # players can be auto-subbed in when a starter blanks, so the LP should
+    # prefer a fringe player who might play over a nailed-on 0%-chance one,
+    # not just whichever is cheapest.
     prob += (
         pulp.lpSum(y[i] * players[i]["predicted_points"] for i in range(n))
-        + epsilon * pulp.lpSum(x[i] * players[i]["predicted_points"] for i in range(n))
+        + BENCH_WEIGHT * pulp.lpSum(x[i] * players[i]["predicted_points"] for i in range(n))
     )
 
     # Squad size = 15

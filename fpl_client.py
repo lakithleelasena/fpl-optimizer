@@ -375,6 +375,7 @@ async def fetch_all_data() -> dict:
         results = await asyncio.gather(*tasks)
 
         pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}
+        team_lookup = {p["id"]: p["team"] for p in active_players}
 
         player_stats: dict[int, dict] = {}
         raw_histories: dict[int, list] = {}
@@ -383,6 +384,7 @@ async def fetch_all_data() -> dict:
             raw_histories[player_id] = [
                 {
                     "round": h["round"],
+                    "fixture": h.get("fixture"),
                     "total_points": h["total_points"],
                     "minutes": h["minutes"],
                     "opponent_team": h["opponent_team"],
@@ -391,6 +393,12 @@ async def fetch_all_data() -> dict:
                     "threat": float(h.get("threat") or 0),
                     "xgc": float(h.get("expected_goals_conceded") or 0),
                     "position": pos_lookup.get(player_id, "MID"),
+                    # Backtest-only fields (accuracy screen) — unused by the legacy backtest
+                    "goals_scored": h.get("goals_scored", 0),
+                    "assists": h.get("assists", 0),
+                    "saves": h.get("saves", 0),
+                    "starts": h.get("starts", 0),
+                    "team_id": team_lookup.get(player_id),
                 }
                 for h in history
             ]
