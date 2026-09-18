@@ -63,5 +63,13 @@ MINUTES_SHRINKAGE_GAMES = 6.0
 # and predictor.py can all import it without a circular dependency.
 DEFCON_THRESHOLD: dict[str, int | None] = {"GKP": None, "DEF": 10, "MID": 12, "FWD": 12}
 
+# Penalty saves (Phase 5, PREDICTION_MODEL_PLAN.md): a small flat GKP-only term,
+# not fixture-specific — we don't have team-level penalty-award data (see Phase
+# 4's scoped-out penalty split), so this uses commonly-cited league-wide rates
+# rather than a per-team estimate. Literature defaults, not locally fit.
+PENALTY_AWARD_RATE_PER_MATCH = 0.09  # ~1 penalty per team roughly every 11 games
+PENALTY_SAVE_RATE = 0.21             # ~1 in 5 penalties saved by keepers
+PENALTY_SAVE_PTS = 5
+
 SEMAPHORE_LIMIT = 20
 CACHE_TTL_SECONDS = 1800  # 30 minutes

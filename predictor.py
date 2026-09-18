@@ -3,7 +3,15 @@ from __future__ import annotations
 import math
 
 import bonus_model
-from config import W_ATK_FACTOR, W_CS_FACTOR, W_FORM_FACTOR
+from config import (
+    PENALTY_AWARD_RATE_PER_MATCH,
+    PENALTY_SAVE_PTS,
+    PENALTY_SAVE_RATE,
+    W_ATK_FACTOR,
+    W_CS_FACTOR,
+    W_FORM_FACTOR,
+)
+from team_xg_model import expected_floor_div_poisson
 
 # FPL points per goal by position — verified against fantasy.premierleague.com/help/rules 2026-09-17
 _PTS_PER_GOAL: dict[str, int] = {"GKP": 10, "DEF": 6, "MID": 5, "FWD": 4}
@@ -45,14 +53,14 @@ def predict_points(
     p_1_to_59 = float(player.get("p_1_to_59") or 0.0)
     season_avg = stats["season_avg"]
 
-    match_team_xg   = float(player.get("match_team_xg")   or 0.0)
-    match_opp_xg    = float(player.get("match_opp_xg")    or 0.0)
-    goal_share      = float(player.get("goal_share")      or 0.0)
-    assist_share    = float(player.get("assist_share")    or 0.0)
-    saves_per_game  = float(player.get("saves_per_game")  or 0.0)
-    defcon_hit_rate = float(player.get("defcon_hit_rate") or 0.0)
-    card_rate       = float(player.get("card_rate")       or 0.0)
-    form            = float(player.get("form")            or 0.0)
+    match_team_xg    = float(player.get("match_team_xg")    or 0.0)
+    match_opp_xg     = float(player.get("match_opp_xg")     or 0.0)
+    goal_share       = float(player.get("goal_share")       or 0.0)
+    assist_share     = float(player.get("assist_share")     or 0.0)
+    saves_per_opp_xg = float(player.get("saves_per_opp_xg") or 0.0)
+    defcon_hit_rate  = float(player.get("defcon_hit_rate")  or 0.0)
+    card_rate        = float(player.get("card_rate")        or 0.0)
+    form             = float(player.get("form")             or 0.0)
 
     # Form adjustment: base ±0.5 cap, then scaled by form_factor
     form_adj_base = max(-0.5, min(0.5, (form - season_avg) * 0.1)) if season_avg > 0 else 0.0
@@ -69,9 +77,26 @@ def predict_points(
     cs_pts = _CS_PTS[position]
     cs_prob = math.exp(-match_opp_xg)
 
-    # Goals conceded deduction and saves — GKP/DEF only, per FPL rules.
+    # Goals conceded deduction — GKP/DEF only, per FPL rules. Scales with continuous
+    # exp_minutes (proportional pitch time), not the discrete p_60_plus gate below —
+    # GC deduction has no 60-minute threshold, unlike clean sheets.
     xgc_pts = -_expected_floor_half_poisson(match_opp_xg) if is_def else 0.0
-    save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
+
+    # Saves (Phase 5): opponent-difficulty-adjusted — saves_per_opp_xg (this
+    # goalkeeper's historical saves per unit of real opponent xG faced) x this
+    # week's actual match_opp_xg, instead of a flat historical per-game average
+    # that didn't vary by fixture difficulty at all. E[floor(saves/3)] via the
+    # Poisson closed form/truncated sum, not floor(E[saves]/3).
+    e_saves = saves_per_opp_xg * match_opp_xg if position == "GKP" else 0.0
+    save_pts = expected_floor_div_poisson(e_saves, 3) if position == "GKP" else 0.0
+
+    # Penalty saves (Phase 5): a small flat GKP-only term — we don't have
+    # team-level penalty-award data (see Phase 4's scoped-out penalty split), so
+    # this uses league-wide literature rates rather than a fixture-specific estimate.
+    pen_save_pts = (
+        PENALTY_AWARD_RATE_PER_MATCH * PENALTY_SAVE_RATE * PENALTY_SAVE_PTS
+        if position == "GKP" else 0.0
+    )
 
     # Attacking returns — same shape for every position (rare for GKP/DEF, primary
     # scoring source for MID/FWD).
@@ -87,23 +112,24 @@ def predict_points(
 
     # Bonus — fitted regression on this season's own per-match data (bonus_model.py),
     # applied to these same expected-event values.
-    bonus_pts = bonus_model.predict_bonus(e_goals, e_assists, cs_prob, saves_per_game, defcon_hit_rate)
+    bonus_pts = bonus_model.predict_bonus(e_goals, e_assists, cs_prob, e_saves, defcon_hit_rate)
 
-    inner = (
-        cs_prob * cs_pts * cs_factor
-        + xgc_pts
-        + save_pts
-        + goal_pts
-        + asst_pts
-        + defcon_pts
-        + card_pts
-        + bonus_pts
-    )
+    # Everything except clean sheets scales with continuous exp_minutes
+    # (proportional pitch-time exposure this match).
+    minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
+
     # Appearance points (Phase 3): P(1-59 min)*1 + P(60+ min)*2, instead of assuming
     # every "start" is worth a flat 2 points — a player subbed off early, or one who
     # only ever comes on as a substitute, is credited correctly either way.
     appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
-    predicted = appearance_pts + exp_minutes * inner + form_adj
+
+    # Clean sheet points (Phase 5): gated by the discrete P(60+) instead of the
+    # continuous exp_minutes fraction — FPL's rule is an explicit 60-minute
+    # threshold ("not conceding while on the pitch AND playing at least 60
+    # minutes"), not a pro-rated-by-minutes credit.
+    cs_term = p_60_plus * cs_prob * cs_pts * cs_factor
+
+    predicted = appearance_pts + cs_term + exp_minutes * minutes_scaled + form_adj
 
     player_xg = round(e_goals + e_assists, 3)
 

@@ -22,6 +22,9 @@ from config import (
     AWAY_ADV_MULT,
     HOME_ADV_MULT,
     LEAGUE_AVG_GOALS,
+    PENALTY_AWARD_RATE_PER_MATCH,
+    PENALTY_SAVE_PTS,
+    PENALTY_SAVE_RATE,
     TAPER_GAMES,
     W_ATK_FACTOR,
     W_CS_FACTOR,
@@ -37,10 +40,12 @@ from fpl_client import (
     compute_card_rate,
     compute_defcon_hit_rate,
     compute_minutes_model,
+    compute_saves_rate,
     compute_xg_share,
 )
 from odds_client import load_odds_history
 from predictor import _CS_PTS, _PTS_PER_GOAL, _expected_floor_half_poisson
+from team_xg_model import expected_floor_div_poisson
 
 FORM_WINDOW = 4  # games used to approximate FPL's own "form" stat (see note in compute_player_points_backtest)
 
@@ -300,8 +305,6 @@ def compute_player_points_backtest(
                 prior, history_past, team_id, team_xg_by_fixture, team_xa_by_fixture,
                 prior_position, window=share_window,
             )
-            save_window = played_prior[-share_window:]
-            saves_per_game = (sum(h.get("saves", 0) for h in save_window) / len(save_window)) if save_window else 0.0
 
             # Season avg (all prior played games) and form proxy (trailing FORM_WINDOW games)
             season_avg = sum(h["total_points"] for h in played_prior) / len(played_prior)
@@ -326,7 +329,15 @@ def compute_player_points_backtest(
             cs_pts = _CS_PTS[position]
             cs_prob = math.exp(-match_opp_xg)
             xgc_pts = -_expected_floor_half_poisson(match_opp_xg) if is_def else 0.0
-            save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
+
+            # Saves (Phase 5) — opponent-difficulty-adjusted, same as the live pipeline.
+            saves_per_opp_xg = compute_saves_rate(prior, team_xg_by_fixture) if position == "GKP" else 0.0
+            e_saves = saves_per_opp_xg * match_opp_xg if position == "GKP" else 0.0
+            save_pts = expected_floor_div_poisson(e_saves, 3) if position == "GKP" else 0.0
+            pen_save_pts = (
+                PENALTY_AWARD_RATE_PER_MATCH * PENALTY_SAVE_RATE * PENALTY_SAVE_PTS
+                if position == "GKP" else 0.0
+            )
 
             e_goals = match_team_xg * goal_share
             e_assists = match_team_xg * assist_share
@@ -336,15 +347,15 @@ def compute_player_points_backtest(
             defcon_pts = 2 * defcon_hit_rate
             card_pts = -card_rate
             bonus_pts = bonus_model.predict_bonus_with_coeffs(
-                bonus_coeffs_by_gw[target_gw], e_goals, e_assists, cs_prob, saves_per_game, defcon_hit_rate,
+                bonus_coeffs_by_gw[target_gw], e_goals, e_assists, cs_prob, e_saves, defcon_hit_rate,
             )
 
-            inner = (
-                cs_prob * cs_pts * cs_factor
-                + xgc_pts + save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
-            )
+            minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
             appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
-            predicted = appearance_pts + exp_minutes * inner + form_adj
+            # Clean sheet points (Phase 5) gated by discrete P(60+), not continuous
+            # exp_minutes — see predictor.py for the FPL-rule rationale.
+            cs_term = p_60_plus * cs_prob * cs_pts * cs_factor
+            predicted = appearance_pts + cs_term + exp_minutes * minutes_scaled + form_adj
 
             predicted = round(max(0.0, predicted), 2)
             actual = entry["total_points"]

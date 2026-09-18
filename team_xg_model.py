@@ -69,6 +69,21 @@ def _poisson_pmf(k: int, lam: float) -> float:
     return math.exp(-lam) * lam ** k / math.factorial(k)
 
 
+def expected_floor_div_poisson(lam: float, n: int, max_k: int = 40) -> float:
+    """
+    E[floor(K/n)] for K ~ Poisson(lam), via truncated direct summation. Used for
+    save points (floor(saves/3)) — n=2's goals-conceded deduction has a closed
+    form via the Poisson parity identity (see predictor._expected_floor_half_poisson),
+    but no equivalent closed form exists for general n, so this sums the PMF
+    directly. max_k=40 gives ample precision for the magnitudes this is used for
+    (lam is typically 0-6 for a match's save count) — the omitted tail probability
+    at k=40 for any realistic lam here is astronomically small.
+    """
+    if lam <= 0:
+        return 0.0
+    return sum((k // n) * _poisson_pmf(k, lam) for k in range(max_k))
+
+
 def _dixon_coles_tau(x: int, y: int, lam_h: float, lam_a: float, rho: float) -> float:
     """Correlation adjustment on the four low-scoreline cells — pure independent
     Poisson underpredicts draws (and slightly misjudges 1-0/0-1 results) without it."""

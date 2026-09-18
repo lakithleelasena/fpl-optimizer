@@ -142,13 +142,11 @@ def _build_player_stats(
     recent_minutes = [gw["minutes"] for gw in history[-5:]]
     season_avg = total_points / games_played if games_played > 0 else 0.0
 
-    # ── Saves: last 6 played matches (goal/assist shares now come from
-    #    _compute_xg_share — an xG-based, shrunk-toward-prior replacement for the
-    #    actual-goals share this function used to compute here; see Phase 1 in
-    #    PREDICTION_MODEL_PLAN.md) ───────────────────────────────────────────
-    last6 = played_gws[-6:]
-    p_saves = sum(h.get("saves", 0) for h in last6)
-    saves_per_game = round(p_saves / len(last6), 2) if last6 else 0.0
+    # (Goal/assist shares, saves rate, DefCon, and cards are all computed outside
+    # this function now — see compute_xg_share/compute_saves_rate/
+    # compute_defcon_hit_rate/compute_card_rate — since they each need data this
+    # function doesn't have access to: team-xG totals, position, etc. See Phase 1
+    # and Phase 5 in PREDICTION_MODEL_PLAN.md.)
 
     # ── Pre-season / new-player fallback: seed from last available season ────
     if games_played == 0 and history_past:
@@ -173,7 +171,6 @@ def _build_player_stats(
         "season_avg": round(season_avg, 2),
         "total_points": total_points,
         "games_played": games_played,
-        "saves_per_game": saves_per_game,
     }
 
 
@@ -343,6 +340,40 @@ def compute_card_rate(history: list[dict], window: int = 6) -> float:
     if not recent:
         return 0.0
     return round(sum(1 for h in recent if h.get("yellow_cards", 0) >= 1) / len(recent), 4)
+
+
+def compute_saves_rate(
+    history: list[dict], team_xg_by_fixture: dict[int, dict[int, float]], window: int = 6,
+) -> float:
+    """
+    Saves per unit of opponent attacking xG actually faced — an opponent-difficulty
+    -adjusted save rate (Phase 5, PREDICTION_MODEL_PLAN.md), replacing a flat
+    saves-per-game average that didn't vary by fixture difficulty at all. From the
+    goalkeeper's last `window` played games: total actual saves made / total real
+    opponent xG they faced in those SAME matches (looked up via
+    team_xg_by_fixture — the real per-fixture xG built in Phase 1, keyed by the
+    opponent they actually played, not their own team).
+
+    Multiply this rate by THIS WEEK's match_opp_xg at prediction time to project
+    expected saves for the upcoming fixture — the same
+    rate-times-this-weeks-opponent-xG pattern as compute_xg_share's goal/assist
+    shares (share x match_team_xg).
+    """
+    played = [h for h in history if h.get("minutes", 0) > 0]
+    recent = played[-window:]
+    if not recent:
+        return 0.0
+    total_saves = sum(h.get("saves", 0) for h in recent)
+    total_opp_xg_faced = 0.0
+    for h in recent:
+        opp = h.get("opponent_team")
+        fid = h.get("fixture")
+        if opp is None or fid is None:
+            continue
+        total_opp_xg_faced += team_xg_by_fixture.get(opp, {}).get(fid, 0.0)
+    if total_opp_xg_faced <= 0:
+        return 0.0
+    return round(total_saves / total_opp_xg_faced, 4)
 
 
 def _completion_rate_from_avg_mins(avg_mins_per_start: float) -> float:
@@ -692,6 +723,9 @@ async def fetch_all_data() -> dict:
             # DefCon + cards (Phase 2) — player-intrinsic, fixture-independent rates
             player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(history, position)
             player_stats[player_id]["card_rate"] = compute_card_rate(history)
+            # Opponent-adjusted save rate (Phase 5) — multiplied by this week's
+            # match_opp_xg at prediction time, same pattern as goal/assist shares.
+            player_stats[player_id]["saves_per_opp_xg"] = compute_saves_rate(history, team_xg_by_fixture)
 
             # Minutes model (Phase 3) — Beta-prior-blended start/minutes rates and
             # a proper P(60+)/P(1-59) split, replacing the old flat this-season-only
@@ -784,7 +818,7 @@ async def fetch_all_data() -> dict:
                 # New participation fields
                 "goal_share": stats["goal_share"],
                 "assist_share": stats["assist_share"],
-                "saves_per_game": stats["saves_per_game"],
+                "saves_per_opp_xg": stats["saves_per_opp_xg"],
                 "defcon_hit_rate": stats["defcon_hit_rate"],
                 "card_rate": stats["card_rate"],
                 "exp_minutes": stats["exp_minutes"],

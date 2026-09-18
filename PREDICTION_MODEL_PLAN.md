@@ -76,9 +76,9 @@ bonus, cards, penalty saves/misses, own goals.
 | Minutes model | ✅ DONE — Beta-prior-blended start/minutes rates, P(60+)/P(1-59) split from real per-game data | European-fixture rotation adjustment — no data source available, deliberately scoped out | ~~P3~~ |
 | Team λ (Tier 1 odds) | ✅ DONE — Shin's devig + joint Poisson/Dixon-Coles fit for the home/away split | Full 2D joint least-squares (both markets move together, not just the split) — marginal gain, skipped | ~~P4~~ |
 | Team λ (Tier 2/3 model) | ✅ DONE — Tier 2 now real xG (summed from player xG), not actual goals | Full log-linear ratings model via MLE with time decay + last-season base — kept the existing taper-blend architecture, only upgraded its data source | ~~P4~~ (full MLE version → P5+) |
-| Save volume | Flat historical per-90 average, no opponent adjustment | Modeled from opponent's expected shots-on-target against; Poisson `E[floor(saves/3)]`; penalty-save term | P5 |
-| Clean sheet minutes gate | Scaled by continuous `exp_minutes` | Gated by discrete `P(60+)` | P5 |
-| Player props cross-check | Not used | Blend `player_goal_scorer_anytime` odds-implied λ with the share model | P5 |
+| Save volume | ✅ DONE — opponent-adjusted rate (saves per unit real opponent xG faced) × Poisson `E[floor(saves/3)]`; penalty-save term added | Full shots-on-target modeling (we approximated via realized opponent xG instead) | ~~P5~~ |
+| Clean sheet minutes gate | ✅ DONE — gated by discrete `P(60+)` | — | ~~P5~~ |
+| Player props cross-check | Not used | Blend `player_goal_scorer_anytime` odds-implied λ with the share model | Deferred — needs an explicit go-ahead to spend Odds API quota on a new endpoint |
 
 ---
 
@@ -321,13 +321,58 @@ noise sources (bonus regression variance, minutes model, etc.). All endpoints
 backtest tabs) verified 200 with a real 15-player squad; Team Overview's GF6/GA6
 display confirmed still actual-goals-based and unaffected; no console errors.
 
-### Phase 5 — Polish
-- Opponent-adjusted save volume (expected shots on target against → Poisson saves).
-- Penalty-save term.
-- Clean-sheet minutes gate switched from continuous `exp_minutes` to discrete `P(60+)`.
-- Player-props cross-check (`player_goal_scorer_anytime` → implied λ, blended with the
-  share model; watch for void-if-not-played conditioning, multiply by P(plays)).
-- Monte Carlo match simulation for bonus (v2) and captaincy variance/correlation.
+### Phase 5 — Polish ✅ DONE (2026-09-18), partial
+
+Implemented:
+- **Opponent-adjusted saves** (`fpl_client.compute_saves_rate`): replaces the old
+  flat saves-per-game average (which never varied by fixture difficulty at all)
+  with `saves_per_opp_xg` — a goalkeeper's historical saves per unit of *real*
+  opponent xG actually faced (looked up via `team_xg_by_fixture`, same real
+  per-fixture data used throughout this pipeline), multiplied by THIS WEEK's
+  `match_opp_xg` at prediction time — the same rate-times-this-weeks-xG pattern
+  as Phase 1's goal/assist shares. `save_pts` now uses `E[floor(saves/3)]`
+  (`team_xg_model.expected_floor_div_poisson`, a truncated-sum Poisson
+  expectation) instead of `floor(E[saves]/3)` — the same point-estimate bias
+  fixed for the GC deduction in Phase 0, now fixed here too. New function
+  cross-validated two ways before use: against the n=2 case's existing closed
+  form (`_expected_floor_half_poisson`) — exact agreement to 6 decimal places —
+  and against a 200k-trial Monte Carlo simulation across several λ/n combos.
+- **Penalty saves**: a small flat GKP-only term
+  (`PENALTY_AWARD_RATE_PER_MATCH × PENALTY_SAVE_RATE × PENALTY_SAVE_PTS`, config
+  constants — literature defaults ~1 penalty per team per 11 games, ~1-in-5 save
+  rate, not locally fit). Not fixture-specific, since we don't have team-level
+  penalty-award data (same gap flagged in Phase 4's scoped-out penalty split).
+- **Clean-sheet minutes gate**: clean-sheet points now gated by the discrete
+  `p_60_plus` (from Phase 3) instead of the continuous `exp_minutes` fraction,
+  matching FPL's actual rule ("not conceding while on the pitch AND playing at
+  least 60 minutes" — an explicit threshold, not a pro-rated credit). The GC
+  deduction stays scaled by continuous `exp_minutes`, since that rule has no
+  60-minute threshold.
+- `backtest_accuracy.py` mirrors all three exactly.
+
+**Deliberately not implemented, for reasons distinct from "too hard" (unlike
+earlier phases' scope-outs):**
+- **Player-props cross-check** — this needs a *new, additional* live Odds API
+  call to the per-event player-props endpoint, spending real quota/cost on the
+  user's Odds API subscription (the user's own original brief estimated ~20
+  credits per slate for this specifically, "budget roughly two prop pulls per
+  gameweek"). Unlike everything else in Phases 0-5, which only ever used data
+  already being fetched, this is an ongoing operational cost decision — not
+  something to spend on unilaterally. Skipped pending an explicit go-ahead.
+- **Monte Carlo match simulation** (bonus v2, captaincy variance/correlation) —
+  the original source review itself frames this as a separate "v2" tier beyond
+  the v1 regression already shipped in Phase 2, not a "polish" item. It's a
+  substantial standalone feature (simulate scorelines, assign goals/assists by
+  share, approximate BPS, rank within each match, track captain covariance
+  across simulations) — more like its own phase than a finishing touch on this one.
+
+Verified live: `expected_floor_div_poisson` cross-validated against both the
+existing closed-form (n=2, exact match) and Monte Carlo (n=3, matched to 3
+decimal places) before wiring in. Backtest MAE improved 2.044→2.027 overall;
+GKP MAE continued its downward trend across every phase that's touched it
+(3.099 pre-Phase-0 → 2.93 → 2.82 → 2.934 → ~2.9 → **2.785** now). All endpoints
+(`/api/players`, `/api/optimize` at n_gw 1 and 3, `/api/transfer-advice`, both
+backtest tabs) verified 200 with a real 15-player squad; no console errors.
 
 ---
 
