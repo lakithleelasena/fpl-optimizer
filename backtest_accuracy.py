@@ -31,10 +31,12 @@ from config import (
 import bonus_model
 from fpl_client import (
     _build_team_rolling,
+    build_minutes_priors,
     build_position_priors,
     build_team_xg_totals,
     compute_card_rate,
     compute_defcon_hit_rate,
+    compute_minutes_model,
     compute_xg_share,
 )
 from odds_client import load_odds_history
@@ -220,6 +222,10 @@ def compute_player_points_backtest(
         [(player_meta[pid]["position"], player_history_past.get(pid))
          for pid in raw_histories if pid in player_meta]
     )
+    minutes_priors = build_minutes_priors(
+        [(player_meta[pid]["position"], player_history_past.get(pid))
+         for pid in raw_histories if pid in player_meta]
+    )
 
     # Bonus model coefficients, refit PER TARGET GAMEWEEK from only history strictly
     # before that gameweek — unlike the live pipeline's single shared cache, the
@@ -249,6 +255,7 @@ def compute_player_points_backtest(
         team_id = meta["team_id"]
         history_past = player_history_past.get(player_id)
         prior_position = position_priors.get(position, (0.0, 0.0))
+        minutes_prior = minutes_priors.get(position, (0.0, 0.0))
         history = sorted(history, key=lambda h: h["round"])
 
         for i, entry in enumerate(history):
@@ -262,14 +269,17 @@ def compute_player_points_backtest(
                 skipped_no_prior += 1
                 continue
 
-            # Participation
+            # Minutes model (Phase 3) — same Beta-prior-blended P(60+)/P(1-59) split
+            # as the live pipeline. NOTE (approximation): historical
+            # chance_of_playing isn't retrievable (same limitation as "form" below),
+            # so availability is fixed at 1.0 here — the backtest can't reproduce a
+            # past injury doubt, only the live app's current-moment view of one.
             team_games_before = _team_games_before(fixtures, team_id, target_gw)
             if team_games_before <= 0:
                 continue
-            total_minutes = sum(h["minutes"] for h in prior)
-            total_starts = sum(h.get("starts", 0) for h in prior)
-            exp_minutes = min(1.0, total_minutes / (team_games_before * 90))
-            exp_start_pct = min(1.0, total_starts / team_games_before)
+            exp_start_pct, exp_minutes, p_60_plus, p_1_to_59 = compute_minutes_model(
+                prior, history_past, team_games_before, 1.0, minutes_prior,
+            )
 
             # xG-based share, shrunk toward last-season-at-club (or position-average)
             # prior — see compute_xg_share. Pass the FULL prior history (n90 needs
@@ -322,7 +332,8 @@ def compute_player_points_backtest(
                 cs_prob * cs_pts * cs_factor
                 + xgc_pts + save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
             )
-            predicted = (exp_start_pct * 2) + exp_minutes * inner + form_adj
+            appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
+            predicted = appearance_pts + exp_minutes * inner + form_adj
 
             predicted = round(max(0.0, predicted), 2)
             actual = entry["total_points"]

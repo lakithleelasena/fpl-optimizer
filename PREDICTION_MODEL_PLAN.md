@@ -73,7 +73,7 @@ bonus, cards, penalty saves/misses, own goals.
 | DefCon (CBIT/CBIRT) | ✅ DONE — empirical hit-rate v1 | Negative-binomial + game-state (win-prob) adjustment | ~~P2~~ (v2 → P5) |
 | Bonus points | ✅ DONE — real OLS regression, this-season data, refit each cache cycle | v2: Monte Carlo match simulation | ~~P2~~ (v2 → P5) |
 | Cards | ✅ DONE — empirical yellow-card rate v1 | — | ~~P2~~ |
-| Minutes model | Flat ratios (`total_starts/team_games`), no smoothing, no P(60+) split, appearance term assumes every start = 60+ mins | Beta-prior blend of last-season rate + this-season starts; separate P(start)/P(60+)/P(sub); European-fixture rotation adjustment | P3 |
+| Minutes model | ✅ DONE — Beta-prior-blended start/minutes rates, P(60+)/P(1-59) split from real per-game data | European-fixture rotation adjustment — no data source available, deliberately scoped out | ~~P3~~ |
 | Team λ (Tier 1 odds) | Simple proportional devig (`1/price ÷ Σ`); total-goals × h2h-implied home-share split | Shin's/power-method devig; joint Poisson-grid fit against both 1X2 and totals simultaneously; Dixon-Coles low-score correction | P4 |
 | Team λ (Tier 2/3 model) | Raw-goals rolling average (≤6 games) × opponent factor × home/away mult | Proper ratings model: `log λ = μ + attack_i − defence_j` with time decay, last-season base + this-season data, market λ as heavily-weighted pseudo-observations | P4 |
 | Save volume | Flat historical per-90 average, no opponent adjustment | Modeled from opponent's expected shots-on-target against; Poisson `E[floor(saves/3)]`; penalty-save term | P5 |
@@ -184,11 +184,57 @@ re-checking this MAE trend as more of this season's data accumulates and the
 bonus regression firms up. All endpoints re-verified 200 with a real 15-player
 squad; no console errors in the browser.
 
-### Phase 3 — Minutes model overhaul
-- Beta-prior blend of last-season start rate with this season's accumulating starts.
-- Split into P(start) / P(60+) / P(sub appearance) instead of one flat ratio.
-- Appearance points become `P(1-59)·1 + P(60+)·2` instead of `exp_start_pct·2`.
-- Add a European-fixture rotation-risk adjustment.
+### Phase 3 — Minutes model overhaul ✅ DONE (2026-09-17)
+
+Implemented in `fpl_client.py`:
+- **`compute_minutes_model()`**: replaces the old flat this-season-only ratio and
+  its hard pre-season-fallback cutover (`team_games>0 ? real ratio : 0`, or a
+  separate `LAST_SEASON_GAMES` branch) with the same Beta-Binomial-posterior-mean
+  shrinkage as Phase 1: `rate = (n*rate_this_season + k*rate_prior) / (n+k)`,
+  `k=6` (`MINUTES_SHRINKAGE_GAMES`). Because `n` (team games played so far) is 0
+  pre-season, the formula *naturally* reduces to the prior alone with no separate
+  branch needed — a cleaner unification than the old code had.
+- **`p_60_plus` / `p_1_to_59`**: computed directly from real per-game minutes this
+  season (no start/appearance conditioning — captures genuine substitute cameos as
+  well as starts hooked early), each independently Beta-shrunk toward a prior.
+  Appearance points in `predictor.py` are now `P(1-59)*1 + P(60+)*2` instead of
+  `exp_start_pct*2`, so a player who's a nailed starter but a rotation risk for
+  60+ minutes (returning from injury, etc.) is no longer credited the full 2
+  points just for being penciled in to start.
+- **Prior approximation**: `history_past` only has season *totals* (no per-game
+  minutes breakdown), so the prior can't be computed as precisely as the
+  this-season side. Approximated via last season's start rate
+  (`past_starts / LAST_SEASON_GAMES`) and a completion-rate proxy from average
+  minutes-per-start (`_completion_rate_from_avg_mins`: ~90 min/start → ~1.0
+  completion, ~60 → ~0.5, ≤30 → 0.0) — a smooth, bounded, but genuinely
+  approximate mapping, since we don't have last season's real per-game
+  distribution to fit against.
+- **`build_minutes_priors()`**: position-average fallback for genuine new
+  arrivals with no last-season data at all, mirroring Phase 1's
+  `build_position_priors`.
+- `backtest_accuracy.py` mirrors this exactly. NOTE (approximation, same pattern
+  as the existing "form" note): historical `chance_of_playing` isn't retrievable,
+  so the backtest fixes availability at 1.0 — it can reproduce a past minutes
+  *pattern* but not a past injury doubt.
+
+**Scoped out of this pass** (explicitly, not silently dropped): **no
+European-fixture rotation-risk adjustment.** FPL's own API (bootstrap-static,
+fixtures) is Premier-League-only — it has no Champions/Europa/Conference League
+fixture data at all, so detecting "this team played in Europe midweek" would
+require an entirely new external data source we don't currently have access to
+or a fetch pipeline for. This is a real, acknowledged gap, not an oversight —
+worth revisiting if a free European-fixtures source is found, but out of scope
+for "start simple."
+
+Verified live: Kinsky (the pre-season Kinsky/Dubravka mispricing case from much
+earlier in this project) now shows `exp_start_pct=0.511` after 4 real gameweeks —
+the model has self-corrected from the pure-prior estimate toward reality, exactly
+as expected once real current-season data accumulates. Backtest MAE improved
+2.082→2.046 overall, and more notably on starters specifically (2.586→2.463) —
+consistent with this phase targeting minutes-prediction accuracy, which the
+original review flagged as likely the single biggest error source. All endpoints
+(`/api/players`, `/api/optimize` at n_gw 1 and 3, `/api/transfer-advice`, both
+backtest tabs) verified 200 with a real 15-player squad; no console errors.
 
 ### Phase 4 — Team λ upgrade
 - Replace proportional devig with Shin's or power method.

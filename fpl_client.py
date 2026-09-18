@@ -16,6 +16,7 @@ from config import (
     HOME_ADV_MULT,
     LAST_SEASON_GAMES,
     LEAGUE_AVG_GOALS,
+    MINUTES_SHRINKAGE_GAMES,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
     SHARE_SHRINKAGE_K,
@@ -103,14 +104,6 @@ def _build_player_stats(
     recent_minutes = [gw["minutes"] for gw in history[-5:]]
     season_avg = total_points / games_played if games_played > 0 else 0.0
 
-    # ── Exp Start% / Exp Minutes source data: current season if any has been played ──
-    in_season_data = games_played > 0
-    total_minutes_season = sum(gw["minutes"] for gw in history)
-    if history and "starts" in history[0]:
-        total_starts_season = sum(gw.get("starts", 0) for gw in history)
-    else:
-        total_starts_season = sum(1 for gw in history if gw["minutes"] >= 60)
-
     # ── Saves: last 6 played matches (goal/assist shares now come from
     #    _compute_xg_share — an xG-based, shrunk-toward-prior replacement for the
     #    actual-goals share this function used to compute here; see Phase 1 in
@@ -134,10 +127,6 @@ def _build_player_stats(
             recent_minutes = [approx_mins] * 5
             recent_points = [round(season_avg)] * 3
             total_points = past_pts
-            # Exp Start% / Exp Minutes source: last season's raw totals (see fetch_all_data
-            # for the divide-by-team-games step, since team games aren't known here)
-            total_minutes_season = past_mins
-            total_starts_season = past_starts
 
     return {
         "opponent_points": opponent_points,
@@ -147,9 +136,6 @@ def _build_player_stats(
         "total_points": total_points,
         "games_played": games_played,
         "saves_per_game": saves_per_game,
-        "in_season_data": in_season_data,
-        "total_minutes_season": total_minutes_season,
-        "total_starts_season": total_starts_season,
     }
 
 
@@ -319,6 +305,114 @@ def compute_card_rate(history: list[dict], window: int = 6) -> float:
     if not recent:
         return 0.0
     return round(sum(1 for h in recent if h.get("yellow_cards", 0) >= 1) / len(recent), 4)
+
+
+def _completion_rate_from_avg_mins(avg_mins_per_start: float) -> float:
+    """Heuristic: given a player's average minutes-per-start, what fraction of
+    those starts likely reached 60+? history_past only has season TOTALS (no
+    per-game minutes breakdown), so this can't be derived exactly — a smooth,
+    bounded proxy: ~90 min/start -> ~1.0, ~60 -> ~0.5, <=30 -> 0.0."""
+    return min(1.0, max(0.0, (avg_mins_per_start - 30) / 60))
+
+
+def build_minutes_priors(
+    entries: list[tuple[str, list[dict] | None]],
+) -> dict[str, tuple[float, float]]:
+    """
+    League-average last-season (start_rate, completion_rate) by position — the
+    shrinkage prior for players with no last-season data at all, mirroring
+    build_position_priors (Phase 1) for the minutes model (Phase 3).
+    `entries`: (position, history_past) pairs.
+    """
+    sums: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for pos, history_past in entries:
+        if not history_past:
+            continue
+        past = sorted(history_past, key=lambda s: s.get("season_name", ""))[-1]
+        past_starts = past.get("starts", 0)
+        past_mins = past.get("minutes", 0)
+        if past_starts <= 0:
+            continue
+        prior_start = past_starts / LAST_SEASON_GAMES
+        prior_completion = _completion_rate_from_avg_mins(past_mins / past_starts)
+        sums[pos].append((prior_start, prior_completion))
+
+    return {
+        pos: (sum(v[0] for v in vals) / len(vals), sum(v[1] for v in vals) / len(vals))
+        for pos, vals in sums.items()
+    }
+
+
+def compute_minutes_model(
+    history: list[dict],
+    history_past: list[dict] | None,
+    team_games_so_far: int,
+    availability: float,
+    position_prior: tuple[float, float] = (0.0, 0.0),
+    k: float = MINUTES_SHRINKAGE_GAMES,
+) -> tuple[float, float, float, float]:
+    """
+    Returns (exp_start_pct, exp_minutes, p_60_plus, p_1_to_59) — a Beta-prior-blended
+    minutes model, replacing the old flat this-season-only ratio and its hard
+    pre-season-fallback cutover (see Phase 3, PREDICTION_MODEL_PLAN.md). Same
+    Beta-Binomial-posterior-mean shrinkage as Phase 1's compute_xg_share:
+        rate = (n*rate_this_season + k*rate_prior) / (n+k)
+    where n = team_games_so_far (0 pre-season, so the blend correctly reduces to
+    the prior alone — no separate pre-season branch needed, unlike the old code).
+
+    p_60_plus / p_1_to_59 are computed directly from real per-game minutes THIS
+    SEASON — no start/appearance conditioning needed, so this naturally captures
+    genuine substitute cameos as well as starts hooked early. The prior can't do
+    the same (history_past has no per-game breakdown, only season totals) —
+    approximated via last season's start rate and a completion-rate proxy from
+    average minutes-per-start (see _completion_rate_from_avg_mins).
+
+    Appearance points then become P(1-59)*1 + P(60+)*2 in predictor.py, instead of
+    assuming every "start" is worth a flat 2 points.
+    """
+    n = team_games_so_far
+    count_appeared = sum(1 for h in history if h.get("minutes", 0) > 0)
+    count_60plus = sum(1 for h in history if h.get("minutes", 0) >= 60)
+    count_1to59 = count_appeared - count_60plus
+    if history and "starts" in history[0]:
+        total_starts = sum(h.get("starts", 0) for h in history)
+    else:
+        total_starts = count_60plus
+    total_minutes = sum(h.get("minutes", 0) for h in history)
+
+    start_rate_now = (total_starts / n) if n > 0 else 0.0
+    minutes_rate_now = (total_minutes / (n * 90)) if n > 0 else 0.0
+    p60_now = (count_60plus / n) if n > 0 else 0.0
+    p1to59_now = (count_1to59 / n) if n > 0 else 0.0
+
+    prior_start, prior_completion = position_prior
+    if history_past:
+        past = sorted(history_past, key=lambda s: s.get("season_name", ""))[-1]
+        past_starts = past.get("starts", 0)
+        past_mins = past.get("minutes", 0)
+        if past_starts > 0:
+            prior_start = past_starts / LAST_SEASON_GAMES
+            prior_completion = _completion_rate_from_avg_mins(past_mins / past_starts)
+
+    prior_minutes_rate = prior_start * (0.3 + 0.7 * prior_completion)
+    prior_p60 = prior_start * prior_completion
+    prior_p1to59 = max(0.0, prior_start - prior_p60)
+
+    denom = n + k
+    if denom <= 0:
+        exp_start_pct = exp_minutes = p_60_plus = p_1_to_59 = 0.0
+    else:
+        exp_start_pct = (n * start_rate_now + k * prior_start) / denom
+        exp_minutes = (n * minutes_rate_now + k * prior_minutes_rate) / denom
+        p_60_plus = (n * p60_now + k * prior_p60) / denom
+        p_1_to_59 = (n * p1to59_now + k * prior_p1to59) / denom
+
+    exp_start_pct = round(min(1.0, exp_start_pct * availability), 3)
+    exp_minutes = round(min(1.0, exp_minutes * availability), 3)
+    p_60_plus = round(min(1.0, p_60_plus * availability), 4)
+    p_1_to_59 = round(min(1.0, p_1_to_59 * availability), 4)
+
+    return exp_start_pct, exp_minutes, p_60_plus, p_1_to_59
 
 
 def _model_xg(
@@ -516,12 +610,18 @@ async def fetch_all_data() -> dict:
 
         team_lookup = {p["id"]: p["team"] for p in active_players}
         pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}
+        elem_lookup = {p["id"]: p for p in active_players}
 
         # ── xG-based goal/assist shares (Phase 1) ─────────────────────────────
         team_xg_by_fixture, team_xa_by_fixture = build_team_xg_totals(
             [(team_lookup.get(pid), history) for pid, history, _ in results]
         )
         position_priors = build_position_priors(
+            [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
+        )
+
+        # ── Minutes model priors (Phase 3) ────────────────────────────────────
+        minutes_priors = build_minutes_priors(
             [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
         )
 
@@ -544,6 +644,21 @@ async def fetch_all_data() -> dict:
             # DefCon + cards (Phase 2) — player-intrinsic, fixture-independent rates
             player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(history, position)
             player_stats[player_id]["card_rate"] = compute_card_rate(history)
+
+            # Minutes model (Phase 3) — Beta-prior-blended start/minutes rates and
+            # a proper P(60+)/P(1-59) split, replacing the old flat this-season-only
+            # ratio and its hard pre-season-fallback cutover.
+            team_games_so_far = team_rolling.get(tid, {}).get("games_played", 0)
+            chance = elem_lookup.get(player_id, {}).get("chance_of_playing_next_round")
+            availability = chance / 100.0 if chance is not None else 1.0
+            minutes_prior = minutes_priors.get(position, (0.0, 0.0))
+            exp_start_pct, exp_minutes, p_60_plus, p_1_to_59 = compute_minutes_model(
+                history, history_past, team_games_so_far, availability, minutes_prior,
+            )
+            player_stats[player_id]["exp_start_pct"] = exp_start_pct
+            player_stats[player_id]["exp_minutes"] = exp_minutes
+            player_stats[player_id]["p_60_plus"] = p_60_plus
+            player_stats[player_id]["p_1_to_59"] = p_1_to_59
 
             player_history_past[player_id] = history_past
             raw_histories[player_id] = [
@@ -596,20 +711,6 @@ async def fetch_all_data() -> dict:
 
             t_rolling = team_rolling.get(team_id, {})
 
-            # ── Exp Start% / Exp Minutes: current-season team games if any have been
-            #    played this season, else the fixed last-season length ──────────────
-            team_games = t_rolling.get("games_played", 0) if stats.get("in_season_data") else LAST_SEASON_GAMES
-            if team_games > 0:
-                exp_minutes = min(1.0, stats["total_minutes_season"] / (team_games * 90))
-                exp_start_pct = min(1.0, stats["total_starts_season"] / team_games)
-            else:
-                exp_minutes = 0.0
-                exp_start_pct = 0.0
-            chance = p.get("chance_of_playing_next_round")
-            availability = chance / 100.0 if chance is not None else 1.0
-            exp_minutes = round(exp_minutes * availability, 3)
-            exp_start_pct = round(exp_start_pct * availability, 3)
-
             players.append({
                 "id": pid,
                 "name": p["web_name"],
@@ -638,8 +739,10 @@ async def fetch_all_data() -> dict:
                 "saves_per_game": stats["saves_per_game"],
                 "defcon_hit_rate": stats["defcon_hit_rate"],
                 "card_rate": stats["card_rate"],
-                "exp_minutes": exp_minutes,
-                "exp_start_pct": exp_start_pct,
+                "exp_minutes": stats["exp_minutes"],
+                "exp_start_pct": stats["exp_start_pct"],
+                "p_60_plus": stats["p_60_plus"],
+                "p_1_to_59": stats["p_1_to_59"],
                 # Per-GW match xG (team and opponent) — model (Tier 2/3) and odds (Tier 1)
                 # kept separate; final blend applied per-request in main.py using odds_weight
                 "gw_match_xg": {

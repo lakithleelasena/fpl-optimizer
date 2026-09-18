@@ -52,6 +52,11 @@ W_ATK_FACTOR  = 1.0   # scales goal/assist contribution for MID/FWD (and rare DE
 # GW6-ish, fading out as more of this season accumulates. Tune via backtest.
 SHARE_SHRINKAGE_K = 6.0
 
+# Minutes-model shrinkage (fpl_client.compute_minutes_model): same Beta-Binomial
+# posterior-mean idea as SHARE_SHRINKAGE_K, applied to start rate / minutes rate /
+# P(60+) / P(1-59) instead of goal share. k=6 games.
+MINUTES_SHRINKAGE_GAMES = 6.0
+
 # DefCon thresholds (single-match CBIT/CBIRT count needed for the flat 2-point award) —
 # verified against fantasy.premierleague.com/help/rules 2026-09-17. GKPs aren't eligible
 # (outfield players only). Lives here (not predictor.py) so fpl_client.py, bonus_model.py,

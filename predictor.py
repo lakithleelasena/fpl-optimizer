@@ -41,6 +41,8 @@ def predict_points(
     position = player.get("position", "MID")
     exp_start_pct = float(player.get("exp_start_pct") or 0.0)
     exp_minutes = float(player.get("exp_minutes") or 0.0)
+    p_60_plus = float(player.get("p_60_plus") or 0.0)
+    p_1_to_59 = float(player.get("p_1_to_59") or 0.0)
     season_avg = stats["season_avg"]
 
     match_team_xg   = float(player.get("match_team_xg")   or 0.0)
@@ -97,7 +99,11 @@ def predict_points(
         + card_pts
         + bonus_pts
     )
-    predicted = (exp_start_pct * 2) + exp_minutes * inner + form_adj
+    # Appearance points (Phase 3): P(1-59 min)*1 + P(60+ min)*2, instead of assuming
+    # every "start" is worth a flat 2 points — a player subbed off early, or one who
+    # only ever comes on as a substitute, is credited correctly either way.
+    appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
+    predicted = appearance_pts + exp_minutes * inner + form_adj
 
     player_xg = round(e_goals + e_assists, 3)
 
