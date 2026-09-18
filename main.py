@@ -439,7 +439,7 @@ async def run_player_points_backtest(share_window: int = 6):
         team_result = compute_team_xg_backtest(data["fixtures"], data["teams"])
         return compute_player_points_backtest(
             data["raw_histories"], data["fixtures"], player_meta,
-            team_result["rows"], share_window=share_window,
+            data["player_history_past"], team_result["rows"], share_window=share_window,
         )
 
     result = await asyncio.to_thread(_run)

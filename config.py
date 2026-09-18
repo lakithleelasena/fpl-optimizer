@@ -43,5 +43,12 @@ W_FORM_FACTOR = 1.0   # scales form adjustment (0 = ignore form, 2 = double sens
 W_CS_FACTOR   = 1.0   # scales clean-sheet bonus for GKP/DEF
 W_ATK_FACTOR  = 1.0   # scales goal/assist contribution for MID/FWD (and rare DEF/GKP goals)
 
+# Goal/assist share shrinkage (fpl_client._compute_xg_share): weight given to the
+# last-season-at-club prior versus this-season's own xG-per-90s-played sample.
+# share = (n90*share_this_season + k*share_prior) / (n90+k) — k=6 means the prior
+# still gets 1/3 the weight of a full 90-minute season of current-season xG data by
+# GW6-ish, fading out as more of this season accumulates. Tune via backtest.
+SHARE_SHRINKAGE_K = 6.0
+
 SEMAPHORE_LIMIT = 20
 CACHE_TTL_SECONDS = 1800  # 30 minutes

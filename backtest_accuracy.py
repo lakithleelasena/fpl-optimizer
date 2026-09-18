@@ -28,9 +28,9 @@ from config import (
     W_FORM_FACTOR,
     W_ODDS_WEIGHT,
 )
-from fpl_client import _build_team_rolling
+from fpl_client import _build_team_rolling, build_position_priors, build_team_xg_totals, compute_xg_share
 from odds_client import load_odds_history
-from predictor import _CS_PTS, _PTS_PER_GOAL
+from predictor import _CS_PTS, _PTS_PER_GOAL, _expected_floor_half_poisson
 
 FORM_WINDOW = 4  # games used to approximate FPL's own "form" stat (see note in compute_player_points_backtest)
 
@@ -133,11 +133,13 @@ def compute_team_xg_backtest(
                 "gw": target_gw, "fixture_id": fid, "team_id": h_id, "team": teams.get(h_id, "?"),
                 "opponent": teams.get(a_id, "?"), "is_home": True, "actual_goals": actual_h,
                 "tier1": tier1_h, "tier2": tier2_h, "tier3": tier3_h, "production": round(prod_h, 3),
+                "error": round(prod_h - actual_h, 3),
             })
             rows.append({
                 "gw": target_gw, "fixture_id": fid, "team_id": a_id, "team": teams.get(a_id, "?"),
                 "opponent": teams.get(h_id, "?"), "is_home": False, "actual_goals": actual_a,
                 "tier1": tier1_a, "tier2": tier2_a, "tier3": tier3_a, "production": round(prod_a, 3),
+                "error": round(prod_a - actual_a, 3),
             })
 
     return {
@@ -172,6 +174,7 @@ def compute_player_points_backtest(
     raw_histories: dict[int, list[dict]],
     fixtures: list[dict],
     player_meta: dict[int, dict],
+    player_history_past: dict[int, list[dict]],
     team_backtest_rows: list[dict],
     share_window: int = 6,
     form_factor: float = W_FORM_FACTOR,
@@ -182,7 +185,10 @@ def compute_player_points_backtest(
     For each player, for each completed GW they have a history entry for, reconstruct
     predicted_points using only data available before that GW, with the goal/assist
     share window capped at `share_window` games (1, 3, or 6 — grows if fewer are
-    available, same discipline as the team xG backtest).
+    available, same discipline as the team xG backtest). Mirrors the live formula's
+    Phase 1 xG-share + shrinkage-toward-prior (see compute_xg_share in fpl_client.py)
+    rather than the old actual-goals share, so this backtest stays a faithful test of
+    what the live app actually does.
 
     Uses team_backtest_rows (from compute_team_xg_backtest) as the source of
     match_team_xg / match_opp_xg, so this stage is a true "given our team-xG
@@ -195,11 +201,17 @@ def compute_player_points_backtest(
     Players with zero prior appearances this season are skipped (no basis to predict —
     this backtest doesn't attempt to reproduce the pre-season last-season fallback).
     """
-    fixture_lookup = {
-        f["id"]: f for f in fixtures
-        if f.get("finished") and f.get("team_h_score") is not None
-    }
     team_xg_lookup = {(r["gw"], r["team_id"]): r["production"] for r in team_backtest_rows}
+
+    # Same xG-share aggregation as the live pipeline, built once from the full
+    # (not gameweek-truncated) history — safe, see build_team_xg_totals docstring.
+    team_xg_by_fixture, team_xa_by_fixture = build_team_xg_totals(
+        [(hist[0].get("team_id") if hist else None, hist) for hist in raw_histories.values()]
+    )
+    position_priors = build_position_priors(
+        [(player_meta[pid]["position"], player_history_past.get(pid))
+         for pid in raw_histories if pid in player_meta]
+    )
 
     rows: list[dict] = []
     skipped_no_prior = 0
@@ -210,6 +222,8 @@ def compute_player_points_backtest(
             continue
         position = meta["position"]
         team_id = meta["team_id"]
+        history_past = player_history_past.get(player_id)
+        prior_position = position_priors.get(position, (0.0, 0.0))
         history = sorted(history, key=lambda h: h["round"])
 
         for i, entry in enumerate(history):
@@ -232,18 +246,16 @@ def compute_player_points_backtest(
             exp_minutes = min(1.0, total_minutes / (team_games_before * 90))
             exp_start_pct = min(1.0, total_starts / team_games_before)
 
-            # Goal/assist share over the requested window (grows if fewer games exist)
-            window = played_prior[-share_window:]
-            p_goals = sum(h.get("goals_scored", 0) for h in window)
-            p_assists = sum(h.get("assists", 0) for h in window)
-            team_goals_window = 0
-            for h in window:
-                fr = fixture_lookup.get(h.get("fixture"))
-                if fr:
-                    team_goals_window += fr["team_h_score"] if h.get("was_home") else fr["team_a_score"]
-            goal_share = (p_goals / team_goals_window) if team_goals_window > 0 else 0.0
-            assist_share = (p_assists / team_goals_window) if team_goals_window > 0 else 0.0
-            saves_per_game = (sum(h.get("saves", 0) for h in window) / len(window)) if window else 0.0
+            # xG-based share, shrunk toward last-season-at-club (or position-average)
+            # prior — see compute_xg_share. Pass the FULL prior history (n90 needs
+            # every game played this season, not just the share window); share_window
+            # only controls the "last N played games" share numerator/denominator.
+            goal_share, assist_share = compute_xg_share(
+                prior, history_past, team_id, team_xg_by_fixture, team_xa_by_fixture,
+                prior_position, window=share_window,
+            )
+            save_window = played_prior[-share_window:]
+            saves_per_game = (sum(h.get("saves", 0) for h in save_window) / len(save_window)) if save_window else 0.0
 
             # Season avg (all prior played games) and form proxy (trailing FORM_WINDOW games)
             season_avg = sum(h["total_points"] for h in played_prior) / len(played_prior)
@@ -263,7 +275,7 @@ def compute_player_points_backtest(
             if is_def:
                 cs_pts = _CS_PTS[position]
                 cs_prob = math.exp(-match_opp_xg)
-                xgc_pts = -math.floor(match_opp_xg / 2)
+                xgc_pts = -_expected_floor_half_poisson(match_opp_xg)
                 save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
                 atk_pts = match_team_xg * goal_share * _PTS_PER_GOAL[position] * atk_factor
                 ast_pts = match_team_xg * assist_share * 3 * atk_factor
@@ -301,8 +313,6 @@ def compute_player_points_backtest(
     starters_only = [r for r in rows if r["started"]]
     starters_mae = mae_for(starters_only)
 
-    biggest_misses = sorted(rows, key=lambda r: abs(r["error"]), reverse=True)[:20]
-
     return {
         "gameweeks": gws,
         "share_window": share_window,
@@ -311,6 +321,5 @@ def compute_player_points_backtest(
         "starters_only_mae": starters_mae,
         "total_predictions": len(rows),
         "skipped_no_prior_data": skipped_no_prior,
-        "biggest_misses": biggest_misses,
         "rows": rows,
     }

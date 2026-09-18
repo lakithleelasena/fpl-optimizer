@@ -610,6 +610,30 @@ function sortTable(key) {
     renderTable();
 }
 
+// ─── Prediction Accuracy: shared top/bottom-by-gameweek grouping ──────────────
+
+// Splits rows into per-gameweek groups of the N biggest positive errors (over-predicted)
+// and N biggest negative errors (under-predicted), skipping the middle. Caps each side
+// at half the gameweek's rows so a sparse gameweek never shows the same row twice.
+function groupTopBottomByGw(rows, gws, n = 5) {
+    const gwsDesc = [...gws].sort((a, b) => b - a);
+    return gwsDesc.map(gw => {
+        const sorted = rows.filter(r => r.gw === gw).sort((a, b) => b.error - a.error);
+        const total = sorted.length;
+        const topCount = Math.min(n, Math.ceil(total / 2));
+        const botCount = Math.min(n, total - topCount);
+        return {
+            gw,
+            top: sorted.slice(0, topCount),
+            bottom: sorted.slice(total - botCount).reverse(),
+        };
+    });
+}
+
+function groupHeaderRow(label, colspan) {
+    return `<tr><td colspan="${colspan}" style="background:#1c2128;font-weight:700;color:#8b949e;padding:8px 12px">${label}</td></tr>`;
+}
+
 // ─── Prediction Accuracy: Team xG backtest ────────────────────────────────────
 
 async function runTeamXgBacktest() {
@@ -661,9 +685,7 @@ function renderTeamXgBacktest(data) {
     }).join(" · ");
     $("#team-xg-samples").textContent = `Sample sizes — ${countsStr}`;
 
-    $("#team-xg-body").innerHTML = [...data.rows]
-        .sort((a, b) => b.gw - a.gw || a.team.localeCompare(b.team))
-        .map(r => `
+    const teamRow = r => `
         <tr>
             <td>GW${r.gw}</td>
             <td>${r.team}</td>
@@ -674,7 +696,15 @@ function renderTeamXgBacktest(data) {
             <td>${r.tier3.toFixed(2)}</td>
             <td style="font-weight:600">${r.production.toFixed(2)}</td>
             <td style="color:#00ff87;font-weight:700">${r.actual_goals}</td>
-        </tr>`).join("");
+            <td style="color:${r.error < 0 ? '#ff6b6b' : '#f5a623'};font-weight:700">${r.error > 0 ? "+" : ""}${r.error.toFixed(2)}</td>
+        </tr>`;
+
+    $("#team-xg-body").innerHTML = groupTopBottomByGw(data.rows, gws, 5).map(g => `
+        ${g.top.length ? groupHeaderRow(`GW${g.gw} — Top ${g.top.length} Over-predicted`, 10) : ""}
+        ${g.top.map(teamRow).join("")}
+        ${g.bottom.length ? groupHeaderRow(`GW${g.gw} — Top ${g.bottom.length} Under-predicted`, 10) : ""}
+        ${g.bottom.map(teamRow).join("")}
+    `).join("");
 
     $("#team-xg-results").classList.remove("hidden");
     $("#team-xg-results").scrollIntoView({ behavior: "smooth" });
@@ -721,7 +751,7 @@ function renderPlayerPointsBacktest(data) {
         data.gameweeks
     );
 
-    $("#pp-misses-body").innerHTML = data.biggest_misses.map(r => `
+    const playerRow = r => `
         <tr>
             <td>GW${r.gw}</td>
             <td>${r.name}</td>
@@ -731,7 +761,14 @@ function renderPlayerPointsBacktest(data) {
             <td style="color:#00ff87;font-weight:700">${r.actual}</td>
             <td style="color:${r.error < 0 ? '#ff6b6b' : '#f5a623'};font-weight:600">${r.error > 0 ? "+" : ""}${r.error.toFixed(2)}</td>
             <td>${r.started ? "Yes" : "No"}</td>
-        </tr>`).join("");
+        </tr>`;
+
+    $("#pp-misses-body").innerHTML = groupTopBottomByGw(data.rows, data.gameweeks, 5).map(g => `
+        ${g.top.length ? groupHeaderRow(`GW${g.gw} — Top ${g.top.length} Over-predicted`, 8) : ""}
+        ${g.top.map(playerRow).join("")}
+        ${g.bottom.length ? groupHeaderRow(`GW${g.gw} — Top ${g.bottom.length} Under-predicted`, 8) : ""}
+        ${g.bottom.map(playerRow).join("")}
+    `).join("");
 
     $("#player-points-results").classList.remove("hidden");
     $("#player-points-results").scrollIntoView({ behavior: "smooth" });

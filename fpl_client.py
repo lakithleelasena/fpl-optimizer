@@ -17,6 +17,7 @@ from config import (
     LEAGUE_AVG_GOALS,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
+    SHARE_SHRINKAGE_K,
     TAPER_GAMES,
 )
 from odds_client import fetch_odds_xg
@@ -78,19 +79,9 @@ def _build_team_rolling(fixtures: list[dict]) -> dict[int, dict]:
     return rolling
 
 
-def _build_fixture_results(fixtures: list[dict]) -> dict[int, dict]:
-    """Map finished fixture IDs to {h_score, a_score} for team goal lookups."""
-    return {
-        f["id"]: {"h_score": f["team_h_score"], "a_score": f["team_a_score"]}
-        for f in fixtures
-        if f.get("finished") and f.get("team_h_score") is not None
-    }
-
-
 def _build_player_stats(
     history: list[dict],
     history_past: list[dict] | None = None,
-    fixture_results: dict | None = None,
 ) -> dict:
     opponent_points: dict[int, list[int]] = {}
     total_points = 0
@@ -118,23 +109,13 @@ def _build_player_stats(
     else:
         total_starts_season = sum(1 for gw in history if gw["minutes"] >= 60)
 
-    # ── Participation rates: last 6 played matches ───────────────────────────
+    # ── Saves: last 6 played matches (goal/assist shares now come from
+    #    _compute_xg_share — an xG-based, shrunk-toward-prior replacement for the
+    #    actual-goals share this function used to compute here; see Phase 1 in
+    #    PREDICTION_MODEL_PLAN.md) ───────────────────────────────────────────
     last6 = played_gws[-6:]
-    p_goals = sum(h.get("goals_scored", 0) for h in last6)
-    p_assists = sum(h.get("assists", 0) for h in last6)
     p_saves = sum(h.get("saves", 0) for h in last6)
     saves_per_game = round(p_saves / len(last6), 2) if last6 else 0.0
-
-    team_goals_last6 = 0
-    if fixture_results:
-        for h in last6:
-            fid = h.get("fixture")
-            fr = fixture_results.get(fid) if fid else None
-            if fr:
-                team_goals_last6 += fr["h_score"] if h.get("was_home") else fr["a_score"]
-
-    goal_share = round(p_goals / team_goals_last6, 4) if team_goals_last6 > 0 else 0.0
-    assist_share = round(p_assists / team_goals_last6, 4) if team_goals_last6 > 0 else 0.0
 
     # ── Pre-season / new-player fallback: seed from last available season ────
     if games_played == 0 and history_past:
@@ -142,8 +123,6 @@ def _build_player_stats(
         past_mins = past.get("minutes", 0)
         past_pts = past.get("total_points", 0)
         past_starts = past.get("starts", 0)
-        past_goals = past.get("goals_scored", 0)
-        past_assists = past.get("assists", 0)
         if past_mins > 0:
             est_games = past_mins / 90
             season_avg = past_pts / est_games
@@ -153,10 +132,6 @@ def _build_player_stats(
             recent_minutes = [approx_mins] * 5
             recent_points = [round(season_avg)] * 3
             total_points = past_pts
-            # Estimate participation from prior season
-            est_team_goals = LEAGUE_AVG_GOALS * est_games
-            goal_share = round(past_goals / est_team_goals, 4) if est_team_goals > 0 else 0.0
-            assist_share = round(past_assists / est_team_goals, 4) if est_team_goals > 0 else 0.0
             # Exp Start% / Exp Minutes source: last season's raw totals (see fetch_all_data
             # for the divide-by-team-games step, since team games aren't known here)
             total_minutes_season = past_mins
@@ -169,13 +144,147 @@ def _build_player_stats(
         "season_avg": round(season_avg, 2),
         "total_points": total_points,
         "games_played": games_played,
-        "goal_share": goal_share,
-        "assist_share": assist_share,
         "saves_per_game": saves_per_game,
         "in_season_data": in_season_data,
         "total_minutes_season": total_minutes_season,
         "total_starts_season": total_starts_season,
     }
+
+
+def build_team_xg_totals(
+    entries: list[tuple[int | None, list[dict]]],
+) -> tuple[dict[int, dict[int, float]], dict[int, dict[int, float]]]:
+    """
+    Sum every player's own `expected_goals`/`expected_assists` by (team_id, fixture_id)
+    — reconstructs each team's real total xG/xA per match directly from the FPL API,
+    with no separate data source (every active player's own history already carries
+    their own xG for every match they played). This is the denominator individual
+    players' shares are computed against — see compute_xg_share.
+
+    `entries`: (team_id, history) pairs — shape-agnostic so both the live pipeline
+    (fetch_all_data) and the accuracy backtest (backtest_accuracy.py) can build their
+    own list from whatever data shape they already have and share this aggregation.
+    Safe to build once globally (rather than per backtest target-gameweek) because a
+    lookup only ever hits fixtures already known to be prior — the caller only ever
+    looks up fixtures appearing in a played-before-target-gw window.
+    """
+    team_xg: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    team_xa: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    for team_id, history in entries:
+        if team_id is None:
+            continue
+        for h in history:
+            if h.get("minutes", 0) <= 0:
+                continue
+            fid = h.get("fixture")
+            if fid is None:
+                continue
+            team_xg[team_id][fid] += float(h.get("expected_goals") or 0)
+            team_xa[team_id][fid] += float(h.get("expected_assists") or 0)
+    return team_xg, team_xa
+
+
+def build_position_priors(
+    entries: list[tuple[str, list[dict] | None]],
+) -> dict[str, tuple[float, float]]:
+    """
+    League-average last-season xG/xA share by position — the shrinkage prior for
+    players with no last-season data at all (a genuine new arrival: promoted-team
+    signing, first pro season, etc.), per Phase 1 of PREDICTION_MODEL_PLAN.md.
+
+    `entries`: (position, history_past) pairs — shape-agnostic, see build_team_xg_totals.
+    """
+    sums: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for pos, history_past in entries:
+        if not history_past:
+            continue
+        past = sorted(history_past, key=lambda s: s.get("season_name", ""))[-1]
+        past_mins = past.get("minutes", 0)
+        if past_mins <= 0:
+            continue
+        est_team_goals = LEAGUE_AVG_GOALS * (past_mins / 90)
+        if est_team_goals <= 0:
+            continue
+        past_xg = float(past.get("expected_goals") or 0)
+        past_xa = float(past.get("expected_assists") or 0)
+        sums[pos].append((past_xg / est_team_goals, past_xa / est_team_goals))
+
+    return {
+        pos: (sum(v[0] for v in vals) / len(vals), sum(v[1] for v in vals) / len(vals))
+        for pos, vals in sums.items()
+    }
+
+
+def compute_xg_share(
+    history: list[dict],
+    history_past: list[dict] | None,
+    team_id: int | None,
+    team_xg_by_fixture: dict[int, dict[int, float]],
+    team_xa_by_fixture: dict[int, dict[int, float]],
+    position_prior: tuple[float, float] = (0.0, 0.0),
+    k: float = SHARE_SHRINKAGE_K,
+    window: int = 6,
+) -> tuple[float, float]:
+    """
+    xG-based share of team output, shrunk toward a prior — replaces a raw
+    actual-goals share, which is nearly pure noise over only a handful of games
+    (see Phase 1, PREDICTION_MODEL_PLAN.md).
+
+        share_this_season = player's own xG (or xA) over the last `window` games
+                             THEY played this season / team's total xG (or xA) over
+                             those SAME fixtures (from build_team_xg_totals)
+        share_prior        = last season's xG/xA at the same club, over an estimated
+                             team-goals figure (LEAGUE_AVG_GOALS x games) — or the
+                             position-average prior with no last-season data at all
+        n90                = 90-minute-equivalents played THIS season (ALL games,
+                             not just the share window) — the shrinkage weight
+
+        share = (n90*share_this_season + k*share_prior) / (n90+k)
+
+    A player with 0 minutes this season relies entirely on the prior; by n90=k
+    (e.g. k=6 full games), the prior and this season's own signal are weighted
+    equally, fading out as the season goes on. `history` should always be the full
+    season-to-date history (live pipeline) or full prior-to-target-gameweek history
+    (backtest) — never pre-truncated to `window`, since n90 needs every game, not
+    just the share window; `window` controls only the share numerator/denominator.
+    """
+    played = [h for h in history if h.get("minutes", 0) > 0]
+    recent = played[-window:]
+
+    player_xg = sum(float(h.get("expected_goals") or 0) for h in recent)
+    player_xa = sum(float(h.get("expected_assists") or 0) for h in recent)
+
+    team_xg_total = 0.0
+    team_xa_total = 0.0
+    if team_id is not None:
+        for h in recent:
+            fid = h.get("fixture")
+            if fid is None:
+                continue
+            team_xg_total += team_xg_by_fixture.get(team_id, {}).get(fid, 0.0)
+            team_xa_total += team_xa_by_fixture.get(team_id, {}).get(fid, 0.0)
+
+    share_goal_now = (player_xg / team_xg_total) if team_xg_total > 0 else 0.0
+    share_assist_now = (player_xa / team_xa_total) if team_xa_total > 0 else 0.0
+
+    n90 = sum(h.get("minutes", 0) for h in history) / 90.0
+
+    prior_goal, prior_assist = position_prior
+    if history_past:
+        past = sorted(history_past, key=lambda s: s.get("season_name", ""))[-1]
+        past_mins = past.get("minutes", 0)
+        if past_mins > 0:
+            est_team_goals = LEAGUE_AVG_GOALS * (past_mins / 90)
+            if est_team_goals > 0:
+                prior_goal = float(past.get("expected_goals") or 0) / est_team_goals
+                prior_assist = float(past.get("expected_assists") or 0) / est_team_goals
+
+    denom = n90 + k
+    if denom <= 0:
+        return 0.0, 0.0
+    goal_share = round((n90 * share_goal_now + k * prior_goal) / denom, 4)
+    assist_share = round((n90 * share_assist_now + k * prior_assist) / denom, 4)
+    return goal_share, assist_share
 
 
 def _model_xg(
@@ -349,9 +458,6 @@ async def fetch_all_data() -> dict:
         league_avg_attack = round(sum(attacks) / len(attacks), 3) if attacks else LEAGUE_AVG_GOALS
         league_avg_defence = round(sum(defences) / len(defences), 3) if defences else LEAGUE_AVG_GOALS
 
-        # ── Fixture results map for player goal-share lookup ─────────────────
-        fixture_results = _build_fixture_results(fixtures)
-
         # ── Odds API match xG (Tier 1) ───────────────────────────────────────
         upcoming_fix_list = [f for f in fixtures if f.get("event") in upcoming_gws]
         odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw)
@@ -375,11 +481,30 @@ async def fetch_all_data() -> dict:
         results = await asyncio.gather(*tasks)
 
         team_lookup = {p["id"]: p["team"] for p in active_players}
+        pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}
+
+        # ── xG-based goal/assist shares (Phase 1) ─────────────────────────────
+        team_xg_by_fixture, team_xa_by_fixture = build_team_xg_totals(
+            [(team_lookup.get(pid), history) for pid, history, _ in results]
+        )
+        position_priors = build_position_priors(
+            [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
+        )
 
         player_stats: dict[int, dict] = {}
         raw_histories: dict[int, list] = {}
+        player_history_past: dict[int, list] = {}
         for player_id, history, history_past in results:
-            player_stats[player_id] = _build_player_stats(history, history_past, fixture_results)
+            player_stats[player_id] = _build_player_stats(history, history_past)
+            tid = team_lookup.get(player_id)
+            prior = position_priors.get(pos_lookup.get(player_id, "MID"), (0.0, 0.0))
+            goal_share, assist_share = compute_xg_share(
+                history, history_past, tid, team_xg_by_fixture, team_xa_by_fixture, prior,
+            )
+            player_stats[player_id]["goal_share"] = goal_share
+            player_stats[player_id]["assist_share"] = assist_share
+
+            player_history_past[player_id] = history_past
             raw_histories[player_id] = [
                 {
                     "round": h["round"],
@@ -390,6 +515,8 @@ async def fetch_all_data() -> dict:
                     "was_home": h.get("was_home", False),
                     "goals_scored": h.get("goals_scored", 0),
                     "assists": h.get("assists", 0),
+                    "expected_goals": float(h.get("expected_goals") or 0),
+                    "expected_assists": float(h.get("expected_assists") or 0),
                     "saves": h.get("saves", 0),
                     "starts": h.get("starts", 0),
                     "team_id": team_lookup.get(player_id),
@@ -488,6 +615,7 @@ async def fetch_all_data() -> dict:
         "teams_short": teams_short,
         "team_strengths": team_strengths,
         "raw_histories": raw_histories,
+        "player_history_past": player_history_past,
         "bootstrap_teams": bootstrap["teams"],
         "fixtures": fixtures,
         "team_rolling": team_rolling,

@@ -4,10 +4,23 @@ import math
 
 from config import W_ATK_FACTOR, W_CS_FACTOR, W_FORM_FACTOR
 
-# FPL points per goal by position
-_PTS_PER_GOAL: dict[str, int] = {"GKP": 6, "DEF": 6, "MID": 5, "FWD": 4}
-# FPL clean sheet points by position
-_CS_PTS: dict[str, int] = {"GKP": 6, "DEF": 4, "MID": 0, "FWD": 0}
+# FPL points per goal by position — verified against fantasy.premierleague.com/help/rules 2026-09-17
+_PTS_PER_GOAL: dict[str, int] = {"GKP": 10, "DEF": 6, "MID": 5, "FWD": 4}
+# FPL clean sheet points by position — verified against fantasy.premierleague.com/help/rules 2026-09-17
+_CS_PTS: dict[str, int] = {"GKP": 4, "DEF": 4, "MID": 1, "FWD": 0}
+
+
+def _expected_floor_half_poisson(lam: float) -> float:
+    """E[floor(K/2)] for K ~ Poisson(lam), closed form.
+
+    floor(k/2) = (k - (k mod 2)) / 2, so E[floor(K/2)] = (E[K] - P(K odd)) / 2.
+    P(K odd) = (1 - exp(-2*lam)) / 2 (standard Poisson parity identity), giving:
+        E[floor(K/2)] = lam/2 - (1 - exp(-2*lam)) / 4
+    This replaces floor(lam/2), which is a biased point-estimate approximation —
+    floor(E[K]/2) != E[floor(K/2)] in general (e.g. lam=1.9 floors to 0 every time
+    under the old formula, but a real Poisson(1.9) variable is >=2 over 40% of the time).
+    """
+    return lam / 2 - (1 - math.exp(-2 * lam)) / 4
 
 
 def predict_points(
@@ -48,7 +61,7 @@ def predict_points(
     if is_def:
         cs_pts   = _CS_PTS[position]
         cs_prob  = math.exp(-match_opp_xg)
-        xgc_pts  = -math.floor(match_opp_xg / 2)
+        xgc_pts  = -_expected_floor_half_poisson(match_opp_xg)
         save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
         atk_pts  = match_team_xg * goal_share  * _PTS_PER_GOAL[position] * atk_factor
         ast_pts  = match_team_xg * assist_share * 3 * atk_factor
