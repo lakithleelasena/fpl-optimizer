@@ -28,7 +28,15 @@ from config import (
     W_FORM_FACTOR,
     W_ODDS_WEIGHT,
 )
-from fpl_client import _build_team_rolling, build_position_priors, build_team_xg_totals, compute_xg_share
+import bonus_model
+from fpl_client import (
+    _build_team_rolling,
+    build_position_priors,
+    build_team_xg_totals,
+    compute_card_rate,
+    compute_defcon_hit_rate,
+    compute_xg_share,
+)
 from odds_client import load_odds_history
 from predictor import _CS_PTS, _PTS_PER_GOAL, _expected_floor_half_poisson
 
@@ -213,6 +221,23 @@ def compute_player_points_backtest(
          for pid in raw_histories if pid in player_meta]
     )
 
+    # Bonus model coefficients, refit PER TARGET GAMEWEEK from only history strictly
+    # before that gameweek — unlike the live pipeline's single shared cache, the
+    # backtest must never let a later gameweek's bonus data leak into an earlier
+    # gameweek's prediction. Cheap: a handful of features, at most a few thousand rows.
+    all_target_gws = sorted({h["round"] for hist in raw_histories.values() for h in hist})
+    bonus_coeffs_by_gw: dict[int, object] = {}
+    for target_gw in all_target_gws:
+        entries = []
+        for pid, hist in raw_histories.items():
+            meta_p = player_meta.get(pid)
+            if not meta_p:
+                continue
+            prior_hist = [h for h in hist if h["round"] < target_gw]
+            if prior_hist:
+                entries.append((meta_p["position"], prior_hist))
+        bonus_coeffs_by_gw[target_gw] = bonus_model.fit(entries)
+
     rows: list[dict] = []
     skipped_no_prior = 0
 
@@ -272,20 +297,32 @@ def compute_player_points_backtest(
             form_adj = max(-0.5, min(0.5, (form_proxy - season_avg) * 0.1)) * form_factor
             is_def = position in ("GKP", "DEF")
 
-            if is_def:
-                cs_pts = _CS_PTS[position]
-                cs_prob = math.exp(-match_opp_xg)
-                xgc_pts = -_expected_floor_half_poisson(match_opp_xg)
-                save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
-                atk_pts = match_team_xg * goal_share * _PTS_PER_GOAL[position] * atk_factor
-                ast_pts = match_team_xg * assist_share * 3 * atk_factor
-                predicted = (exp_start_pct * 2) + exp_minutes * (
-                    cs_prob * cs_pts * cs_factor + xgc_pts + save_pts + atk_pts + ast_pts
-                ) + form_adj
-            else:
-                goal_pts = match_team_xg * goal_share * _PTS_PER_GOAL[position] * atk_factor
-                asst_pts = match_team_xg * assist_share * 3 * atk_factor
-                predicted = (exp_start_pct * 2) + exp_minutes * (goal_pts + asst_pts) + form_adj
+            # DefCon + cards (Phase 2) — same empirical hit-rate as the live pipeline,
+            # computed from prior (not gameweek-truncated-to-share_window) history.
+            defcon_hit_rate = compute_defcon_hit_rate(prior, position)
+            card_rate = compute_card_rate(prior)
+
+            cs_pts = _CS_PTS[position]
+            cs_prob = math.exp(-match_opp_xg)
+            xgc_pts = -_expected_floor_half_poisson(match_opp_xg) if is_def else 0.0
+            save_pts = (saves_per_game / 3) if position == "GKP" else 0.0
+
+            e_goals = match_team_xg * goal_share
+            e_assists = match_team_xg * assist_share
+            goal_pts = e_goals * _PTS_PER_GOAL[position] * atk_factor
+            asst_pts = e_assists * 3 * atk_factor
+
+            defcon_pts = 2 * defcon_hit_rate
+            card_pts = -card_rate
+            bonus_pts = bonus_model.predict_bonus_with_coeffs(
+                bonus_coeffs_by_gw[target_gw], e_goals, e_assists, cs_prob, saves_per_game, defcon_hit_rate,
+            )
+
+            inner = (
+                cs_prob * cs_pts * cs_factor
+                + xgc_pts + save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
+            )
+            predicted = (exp_start_pct * 2) + exp_minutes * inner + form_adj
 
             predicted = round(max(0.0, predicted), 2)
             actual = entry["total_points"]

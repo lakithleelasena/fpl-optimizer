@@ -70,9 +70,9 @@ bonus, cards, penalty saves/misses, own goals.
 | GC deduction | ✅ DONE — exact Poisson closed form via `_expected_floor_half_poisson()` | — | ~~P0~~ |
 | Goal/assist share | ✅ DONE — xG/xA share, shrunk toward last-season-at-club (or position-average) prior via `n90/(n90+k)` | Still uses total xG (not non-penalty-split) — carried into Phase 4 | ~~P1~~ |
 | Penalty goals | Not separated at all — still true after Phase 1 | Split team λ into open-play/penalty/OG; explicit `pen_share`/`team_pens`/`conversion` term | P4 (moved from P1, bundled with team-λ rework) |
-| DefCon (CBIT/CBIRT) | **Absent entirely** | Modeled from FPL's own `clearances_blocks_interceptions`/`recoveries`/`tackles`/`defensive_contribution` fields (already fetched by the API, unused by us) | P2 |
-| Bonus points | **Absent entirely** | v1: regression on expected events → bonus. v2 (later): Monte Carlo match simulation | P2 |
-| Cards | **Absent entirely** | Small per-90 yellow card rate term | P2 (low value, bundle with bonus work) |
+| DefCon (CBIT/CBIRT) | ✅ DONE — empirical hit-rate v1 | Negative-binomial + game-state (win-prob) adjustment | ~~P2~~ (v2 → P5) |
+| Bonus points | ✅ DONE — real OLS regression, this-season data, refit each cache cycle | v2: Monte Carlo match simulation | ~~P2~~ (v2 → P5) |
+| Cards | ✅ DONE — empirical yellow-card rate v1 | — | ~~P2~~ |
 | Minutes model | Flat ratios (`total_starts/team_games`), no smoothing, no P(60+) split, appearance term assumes every start = 60+ mins | Beta-prior blend of last-season rate + this-season starts; separate P(start)/P(60+)/P(sub); European-fixture rotation adjustment | P3 |
 | Team λ (Tier 1 odds) | Simple proportional devig (`1/price ÷ Σ`); total-goals × h2h-implied home-share split | Shin's/power-method devig; joint Poisson-grid fit against both 1X2 and totals simultaneously; Dixon-Coles low-score correction | P4 |
 | Team λ (Tier 2/3 model) | Raw-goals rolling average (≤6 games) × opponent factor × home/away mult | Proper ratings model: `log λ = μ + attack_i − defence_j` with time decay, last-season base + this-season data, market λ as heavily-weighted pseudo-observations | P4 |
@@ -126,15 +126,63 @@ Verified live: Haaland/Fernandes-style explosive-performance predictions moved u
 significantly (Haaland GW2 2.00→4.27, Fernandes GW2 2.00→4.16) — both were being
 underrated by the old noisy actual-goals share; overall backtest MAE improved
 1.995→1.981. All endpoints (`/api/players`, `/api/optimize`, `/api/transfer-advice`,
-both backtest tabs) verified 200 with a real 15-player squad. Not yet committed.
+both backtest tabs) verified 200 with a real 15-player squad.
 
-### Phase 2 — DefCon + bonus
-- Add a DefCon term using already-fetched `clearances_blocks_interceptions`/
-  `recoveries`/`tackles`/`defensive_contribution` fields — start with a simple per-90
-  rate × minutes / threshold check (2 pts if count ≥ threshold), before the
-  negative-binomial/game-state-adjusted version.
-- Add a bonus regression (v1: simple regression mapping expected events → bonus points).
-- Add a small cards term while in this area.
+### Phase 2 — DefCon + bonus ✅ DONE (2026-09-17)
+
+Also fixed a bug found while restructuring the formula: Phase 0 corrected
+`_CS_PTS["MID"]` from 0 to 1, but `predict_points()`'s `is_def` branch meant MID
+never actually received any clean-sheet credit at all — the dict value was right,
+the formula never read it for that position. Unified the formula so `cs_prob`/
+`cs_pts` are computed for every position (naturally a no-op for FWD, whose
+`_CS_PTS` is 0).
+
+Implemented:
+- **DefCon** (`fpl_client.compute_defcon_hit_rate`): empirical
+  `P(defensive_contribution >= threshold)` from the player's last 6 played games —
+  the "start simple" v1, before a negative-binomial/game-state-adjusted version.
+  FPL's own `defensive_contribution` field already sums exactly the right stats per
+  position (CBIT for defenders, CBIRT for mid/forwards), so no need to combine the
+  individual clearances/blocks/interceptions/tackles/recoveries fields ourselves.
+  `E[DefCon] = 2 * hit_rate`, added inside the `exp_minutes * (...)` bracket for
+  every position (0 for GKP, per FPL rules — outfield players only).
+- **Cards**: `fpl_client.compute_card_rate` — empirical P(yellow) from the last 6
+  played games, `-1 * rate` as a small deduction. Red cards skipped for v1 (rare,
+  and already dominate the match outcome via lost minutes).
+- **Bonus** (new `bonus_model.py`): a genuine OLS regression —
+  `bonus ~ goals + assists + clean_sheet + saves + defcon_hit` — fit on every played
+  match across all active players THIS SEASON ONLY (not last season's: BPS was
+  reworked for 2026/27 — no more tackled-player penalty, CBI now 1 BPS per 3 instead
+  of per 2, restructured GK save BPS with a big-chance bonus — so old bonus data
+  wouldn't even be measuring the same thing). Refit once per `fetch_all_data()`
+  cache cycle (~1200+ rows already at GW5, cheap). Applied to each player's
+  *expected* event values (`cs_prob` standing in for the training data's 0/1
+  clean-sheet outcome, etc.), clipped to bonus's real `[0,3]` range. Falls back to a
+  hand-set default until 200+ rows exist to fit against.
+- `backtest_accuracy.py` mirrors all three, with one correctness point that needed
+  care: the bonus model's live cache is fit on *all* current data, which would leak
+  future gameweeks' bonus outcomes into an earlier backtest target gameweek.
+  `bonus_model.fit()` is a pure function for exactly this reason — the backtest
+  refits it separately **per target gameweek**, from only history strictly before
+  that gameweek, instead of reusing the shared live cache.
+
+**Scoped out of this pass**: no negative-binomial/game-state adjustment for DefCon
+(regress on market-implied win probability — underdogs defend more) — still the
+flat empirical hit-rate. No Monte Carlo bonus simulation (v2) — this is the
+regression-only v1. No `defcon_factor`/bonus-weight UI slider — kept as fixed
+formula terms for now, consistent with how `SHARE_SHRINKAGE_K` was also kept
+backend-only in Phase 1, to avoid the UI sprawling with a slider per new term.
+
+Verified live: GW5 optimized XI total rose 65.2→66.6 points (previously-uncredited
+bonus/DefCon points now counted). Backtest MAE moved 1.981→2.082 — a real but small
+increase, expected: three brand-new additive terms (bonus, DefCon, cards) replace
+what was previously a hard `0` for every single prediction, so some model risk is
+now present where there used to be none. Since bonus and DefCon points are
+genuinely part of every actual score, leaving them at zero wasn't "safer" — it was
+a different, larger, systematic bias (undercounting real points every game). Worth
+re-checking this MAE trend as more of this season's data accumulates and the
+bonus regression firms up. All endpoints re-verified 200 with a real 15-player
+squad; no console errors in the browser.
 
 ### Phase 3 — Minutes model overhaul
 - Beta-prior blend of last-season start rate with this season's accumulating starts.

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from dotenv import load_dotenv
 
@@ -49,6 +51,12 @@ W_ATK_FACTOR  = 1.0   # scales goal/assist contribution for MID/FWD (and rare DE
 # still gets 1/3 the weight of a full 90-minute season of current-season xG data by
 # GW6-ish, fading out as more of this season accumulates. Tune via backtest.
 SHARE_SHRINKAGE_K = 6.0
+
+# DefCon thresholds (single-match CBIT/CBIRT count needed for the flat 2-point award) —
+# verified against fantasy.premierleague.com/help/rules 2026-09-17. GKPs aren't eligible
+# (outfield players only). Lives here (not predictor.py) so fpl_client.py, bonus_model.py,
+# and predictor.py can all import it without a circular dependency.
+DEFCON_THRESHOLD: dict[str, int | None] = {"GKP": None, "DEF": 10, "MID": 12, "FWD": 12}
 
 SEMAPHORE_LIMIT = 20
 CACHE_TTL_SECONDS = 1800  # 30 minutes

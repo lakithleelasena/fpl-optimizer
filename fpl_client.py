@@ -10,6 +10,7 @@ from config import (
     AWAY_ADV_MULT,
     BOOTSTRAP_URL,
     CACHE_TTL_SECONDS,
+    DEFCON_THRESHOLD,
     ELEMENT_SUMMARY_URL,
     FIXTURES_URL,
     HOME_ADV_MULT,
@@ -20,6 +21,7 @@ from config import (
     SHARE_SHRINKAGE_K,
     TAPER_GAMES,
 )
+import bonus_model
 from odds_client import fetch_odds_xg
 
 _cache: dict = {}
@@ -287,6 +289,38 @@ def compute_xg_share(
     return goal_share, assist_share
 
 
+def compute_defcon_hit_rate(history: list[dict], position: str, window: int = 6) -> float:
+    """
+    Empirical estimate of P(defensive_contribution >= threshold this match), from
+    the player's own history over their last `window` played games — the "start
+    simple" DefCon v1 from Phase 2 (PREDICTION_MODEL_PLAN.md), before a
+    negative-binomial/game-state-adjusted version. FPL's own `defensive_contribution`
+    field already sums exactly the right stats per position (CBIT for defenders,
+    CBIRT for mid/forwards) — no need to combine the individual clearances/blocks/
+    interceptions/tackles/recoveries fields ourselves.
+    """
+    threshold = DEFCON_THRESHOLD.get(position)
+    if threshold is None:
+        return 0.0
+    played = [h for h in history if h.get("minutes", 0) > 0]
+    recent = played[-window:]
+    if not recent:
+        return 0.0
+    hits = sum(1 for h in recent if h.get("defensive_contribution", 0) >= threshold)
+    return round(hits / len(recent), 4)
+
+
+def compute_card_rate(history: list[dict], window: int = 6) -> float:
+    """P(yellow card this match), from the last `window` played games — used as a
+    small per-match points deduction. Red cards are rare enough, and already
+    dominate the match outcome so heavily via lost minutes, to skip for this v1."""
+    played = [h for h in history if h.get("minutes", 0) > 0]
+    recent = played[-window:]
+    if not recent:
+        return 0.0
+    return round(sum(1 for h in recent if h.get("yellow_cards", 0) >= 1) / len(recent), 4)
+
+
 def _model_xg(
     h_id: int, a_id: int, h_fdr: int, a_fdr: int, team_rolling: dict[int, dict], league_avg_defence: float,
 ) -> tuple[float, float]:
@@ -491,18 +525,25 @@ async def fetch_all_data() -> dict:
             [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
         )
 
+        # ── Bonus model (Phase 2) — refit from this season's own data ────────
+        bonus_model.refit(results, pos_lookup)
+
         player_stats: dict[int, dict] = {}
         raw_histories: dict[int, list] = {}
         player_history_past: dict[int, list] = {}
         for player_id, history, history_past in results:
             player_stats[player_id] = _build_player_stats(history, history_past)
             tid = team_lookup.get(player_id)
-            prior = position_priors.get(pos_lookup.get(player_id, "MID"), (0.0, 0.0))
+            position = pos_lookup.get(player_id, "MID")
+            prior = position_priors.get(position, (0.0, 0.0))
             goal_share, assist_share = compute_xg_share(
                 history, history_past, tid, team_xg_by_fixture, team_xa_by_fixture, prior,
             )
             player_stats[player_id]["goal_share"] = goal_share
             player_stats[player_id]["assist_share"] = assist_share
+            # DefCon + cards (Phase 2) — player-intrinsic, fixture-independent rates
+            player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(history, position)
+            player_stats[player_id]["card_rate"] = compute_card_rate(history)
 
             player_history_past[player_id] = history_past
             raw_histories[player_id] = [
@@ -519,6 +560,10 @@ async def fetch_all_data() -> dict:
                     "expected_assists": float(h.get("expected_assists") or 0),
                     "saves": h.get("saves", 0),
                     "starts": h.get("starts", 0),
+                    "clean_sheets": h.get("clean_sheets", 0),
+                    "yellow_cards": h.get("yellow_cards", 0),
+                    "defensive_contribution": h.get("defensive_contribution", 0),
+                    "bonus": h.get("bonus", 0),
                     "team_id": team_lookup.get(player_id),
                 }
                 for h in history
@@ -591,6 +636,8 @@ async def fetch_all_data() -> dict:
                 "goal_share": stats["goal_share"],
                 "assist_share": stats["assist_share"],
                 "saves_per_game": stats["saves_per_game"],
+                "defcon_hit_rate": stats["defcon_hit_rate"],
+                "card_rate": stats["card_rate"],
                 "exp_minutes": exp_minutes,
                 "exp_start_pct": exp_start_pct,
                 # Per-GW match xG (team and opponent) — model (Tier 2/3) and odds (Tier 1)
