@@ -74,8 +74,8 @@ bonus, cards, penalty saves/misses, own goals.
 | Bonus points | ✅ DONE — real OLS regression, this-season data, refit each cache cycle | v2: Monte Carlo match simulation | ~~P2~~ (v2 → P5) |
 | Cards | ✅ DONE — empirical yellow-card rate v1 | — | ~~P2~~ |
 | Minutes model | ✅ DONE — Beta-prior-blended start/minutes rates, P(60+)/P(1-59) split from real per-game data | European-fixture rotation adjustment — no data source available, deliberately scoped out | ~~P3~~ |
-| Team λ (Tier 1 odds) | Simple proportional devig (`1/price ÷ Σ`); total-goals × h2h-implied home-share split | Shin's/power-method devig; joint Poisson-grid fit against both 1X2 and totals simultaneously; Dixon-Coles low-score correction | P4 |
-| Team λ (Tier 2/3 model) | Raw-goals rolling average (≤6 games) × opponent factor × home/away mult | Proper ratings model: `log λ = μ + attack_i − defence_j` with time decay, last-season base + this-season data, market λ as heavily-weighted pseudo-observations | P4 |
+| Team λ (Tier 1 odds) | ✅ DONE — Shin's devig + joint Poisson/Dixon-Coles fit for the home/away split | Full 2D joint least-squares (both markets move together, not just the split) — marginal gain, skipped | ~~P4~~ |
+| Team λ (Tier 2/3 model) | ✅ DONE — Tier 2 now real xG (summed from player xG), not actual goals | Full log-linear ratings model via MLE with time decay + last-season base — kept the existing taper-blend architecture, only upgraded its data source | ~~P4~~ (full MLE version → P5+) |
 | Save volume | Flat historical per-90 average, no opponent adjustment | Modeled from opponent's expected shots-on-target against; Poisson `E[floor(saves/3)]`; penalty-save term | P5 |
 | Clean sheet minutes gate | Scaled by continuous `exp_minutes` | Gated by discrete `P(60+)` | P5 |
 | Player props cross-check | Not used | Blend `player_goal_scorer_anytime` odds-implied λ with the share model | P5 |
@@ -236,15 +236,90 @@ original review flagged as likely the single biggest error source. All endpoints
 (`/api/players`, `/api/optimize` at n_gw 1 and 3, `/api/transfer-advice`, both
 backtest tabs) verified 200 with a real 15-player squad; no console errors.
 
-### Phase 4 — Team λ upgrade
-- Replace proportional devig with Shin's or power method.
-- Joint Poisson-grid fit against 1X2 + totals simultaneously (not a simple total ×
-  home-share split).
-- Add Dixon-Coles low-score correlation correction.
-- Replace the Tier 2/3 raw-goals rolling average with a proper ratings model
-  (`log λ = μ + attack − defence`, time-decayed, last-season base + this-season data,
-  market λ as pseudo-observations for re-anchoring).
-- Promoted-team prior from historical promoted-side performance.
+### Phase 4 — Team λ upgrade ✅ DONE (2026-09-18)
+
+New `team_xg_model.py`:
+- **`devig_shin()`**: Shin's method devigging for the h2h (1X2) market, replacing
+  simple proportional normalisation (`p_i = π_i/Σπ_j`). Solves for the "informed
+  money" fraction z such that `p_i(z) = (√(z²+4(1-z)π_i²/B) - z)/(2(1-z))` sums to
+  1 (bisection; B = raw implied-prob sum, the overround). Verified against two
+  synthetic test cases before wiring in: (1) sums to exactly 1.0, (2) correctly
+  shifts probability *toward* the favorite and *away* from the longshot relative
+  to proportional normalisation (0.7242→0.7423 favorite, 0.1046→0.0942 longshot in
+  a big-favorite test case) — the documented direction of the favorite-longshot
+  bias correction, confirming the implementation isn't just plausible-looking but
+  behaving correctly. Falls back to proportional normalisation if the input is
+  degenerate or the result fails a sanity check.
+- **`poisson_match_probs()`** + **`fit_team_lambdas()`**: solves for `(λ_home, λ_away)`
+  whose Poisson scoreline grid (Dixon-Coles-adjusted — see below) reproduces the
+  market's implied `P(home win)`, holding the total fixed at the totals market's
+  implied total goals. Replaces the old `home_xg = total_xg × home_share` linear
+  split, which ignored the shape of the Poisson distribution entirely. This is a
+  1D bisection over the home/away split (not a full 2D joint least-squares over
+  both markets moving together) — a deliberate simplification to avoid a
+  numerical-solver dependency for a small expected additional gain; documented,
+  not hidden.
+- **Dixon-Coles correction** (`_dixon_coles_tau`, ρ=-0.13, a literature default
+  from Dixon & Coles 1997, not locally fit): applied to the four low-score cells
+  (0-0, 1-0, 0-1, 1-1) inside `poisson_match_probs`, so the λ *recovered* from
+  market odds is corrected for pure-Poisson's known under-prediction of draws.
+  Scoped decision: **not** additionally re-applied to `predictor.py`'s own
+  clean-sheet marginal (`cs_prob = exp(-λ)`) — doing that correctly needs the
+  home/away-identity-aware asymmetric tau terms threaded through predict_points,
+  adding real complexity for a small further gain once the λ feeding into it is
+  already DC-corrected upstream. `odds_client.py` wired to use both new functions
+  in place of the old devig + linear split.
+- **`fpl_client.build_team_xg_rolling()`**: Tier 2's rolling signal switched from
+  actual goals scored/conceded to real xG — summed from every player's own
+  FPL-reported xG per fixture via Phase 1's `build_team_xg_totals`, per the
+  review's "use xG rather than goals as the target" recommendation. Required
+  reordering `fetch_all_data()` so player histories (and thus `team_xg_by_fixture`)
+  are fetched before Tier 2/3 runs, not after. `_build_team_rolling` (actual
+  goals) is kept **unchanged** and separate — it still feeds the Team Overview
+  tab's GF6/GA6 display, which is explicitly meant to show real goals, not a
+  model estimate.
+- `backtest_accuracy.py`'s `compute_team_xg_backtest` mirrors the Tier 2 xG switch
+  (new `raw_histories` parameter) so the backtest's "Tier 2" line keeps meaning
+  what the live app actually does; Tier 1 automatically benefits since it just
+  replays whatever `odds_history.json` already has archived (built by the updated
+  `odds_client.py`).
+
+**Scoped out of this pass** (documented, not silently dropped — these are the
+hardest, most data-hungry pieces of the original review's Phase 4):
+- **No full log-linear ratings model** (`log λ = μ + attack − defence` via MLE,
+  time-decayed, last-season base blended with this season). This is a genuine
+  statistical model-fitting exercise (an iterative solver, effectively a
+  simplified Dixon-Coles/Bradley-Terry-style fit across the whole league at once)
+  — a materially bigger undertaking than the achievable pieces above. The
+  existing taper-blend architecture (Tier 2 rolling xG × opponent factor ×
+  home/away mult, tapering into Tier 3 FDR) is kept as the underlying structure;
+  only its *data source* was upgraded this phase.
+- **No promoted-team-specific prior.** Needs historical data on how previously
+  promoted sides performed — an external data source we don't have access to.
+- **No penalty/open-play/own-goal split** of team λ. FPL doesn't cleanly expose
+  team-level penalty-award data (only `penalties_missed`/`penalties_saved` per
+  player), and reconstructing it accurately would need real research into what's
+  derivable from available fields — not attempted here to avoid a half-right
+  penalty model quietly corrupting every attacker's `E[goals]`.
+- **No last-season team-xG base** for Tier 2/3 (this season's rolling xG only).
+  A last-season base would need every player who was on a team's roster last
+  season, including those who've since transferred away — a wider data-fetch
+  than we currently do (only this season's active roster gets `history_past`
+  pulled). Consistent with the project's this-season backtest-scope decision.
+
+Verified live: Shin's/joint-fit tested against two independent synthetic cases
+before wiring in (both passed, see above); a live `/api/refresh-odds` call
+produced sane, non-degenerate xG values across all 20 GW5 fixtures. Team xG
+backtest Tier 2 MAE moved measurably (e.g. GW2 1.398→1.181, GW3 0.972→0.992,
+GW4 1.188→1.054 — improved in 2 of 3 gameweeks) now that it's genuinely xG-based.
+Player-points backtest overall MAE barely moved (2.046→2.044) — expected, since
+Tier 1 has no completed-gameweek data yet to show up in this backtest (GW5
+hasn't finished), and Tier 2's xG-swap is a second-order refinement several
+steps removed from final player points, whose accuracy is now dominated by other
+noise sources (bonus regression variance, minutes model, etc.). All endpoints
+(`/api/players`, `/api/optimize` at n_gw 1 and 3, `/api/transfer-advice`, both
+backtest tabs) verified 200 with a real 15-player squad; Team Overview's GF6/GA6
+display confirmed still actual-goals-based and unaffected; no console errors.
 
 ### Phase 5 — Polish
 - Opponent-adjusted save volume (expected shots on target against → Poisson saves).

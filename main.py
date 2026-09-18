@@ -421,7 +421,7 @@ async def run_team_xg_backtest():
     for gameweeks before odds history archiving started."""
     data = await fetch_all_data()
     result = await asyncio.to_thread(
-        compute_team_xg_backtest, data["fixtures"], data["teams"],
+        compute_team_xg_backtest, data["fixtures"], data["teams"], data["raw_histories"],
     )
     return result
 
@@ -436,7 +436,7 @@ async def run_player_points_backtest(share_window: int = 6):
     player_meta = {p["id"]: p for p in data["players"]}
 
     def _run():
-        team_result = compute_team_xg_backtest(data["fixtures"], data["teams"])
+        team_result = compute_team_xg_backtest(data["fixtures"], data["teams"], data["raw_histories"])
         return compute_player_points_backtest(
             data["raw_histories"], data["fixtures"], player_meta,
             data["player_history_past"], team_result["rows"], share_window=share_window,

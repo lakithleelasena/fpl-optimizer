@@ -82,6 +82,44 @@ def _build_team_rolling(fixtures: list[dict]) -> dict[int, dict]:
     return rolling
 
 
+def build_team_xg_rolling(
+    fixtures: list[dict], team_xg_by_fixture: dict[int, dict[int, float]],
+) -> dict[int, dict]:
+    """
+    Same shape and purpose as _build_team_rolling (last-6-finished-matches rolling
+    average, used as Tier 2's underlying signal), but built from real xG — summed
+    from every player's own FPL-reported xG per fixture, via build_team_xg_totals —
+    instead of actual goals scored/conceded. Phase 4, PREDICTION_MODEL_PLAN.md:
+    "use xG rather than goals as the target" for the rolling-form component.
+    _build_team_rolling (actual goals) is kept separately and unchanged — it still
+    feeds the Team Overview tab's GF6/GA6 display, which is explicitly meant to
+    show real goals, not a model estimate.
+    """
+    finished = [f for f in fixtures if f.get("finished") and f.get("team_h_score") is not None]
+    finished.sort(key=lambda f: (f.get("event") or 0, f.get("kickoff_time") or ""))
+
+    team_history: dict[int, list[tuple[float, float]]] = defaultdict(list)
+    for f in finished:
+        fid = f["id"]
+        h, a = f["team_h"], f["team_a"]
+        h_xg = team_xg_by_fixture.get(h, {}).get(fid, 0.0)
+        a_xg = team_xg_by_fixture.get(a, {}).get(fid, 0.0)
+        team_history[h].append((h_xg, a_xg))
+        team_history[a].append((a_xg, h_xg))
+
+    rolling: dict[int, dict] = {}
+    for tid, matches in team_history.items():
+        last6 = matches[-6:]
+        attack = sum(m[0] for m in last6) / len(last6)
+        defence = sum(m[1] for m in last6) / len(last6)
+        rolling[tid] = {
+            "attack_xg6": round(attack, 3),
+            "defence_xg6": round(defence, 3),
+            "games_played": len(team_history[tid]),
+        }
+    return rolling
+
+
 def _build_player_stats(
     history: list[dict],
     history_past: list[dict] | None = None,
@@ -579,22 +617,6 @@ async def fetch_all_data() -> dict:
             gw_home_map[gw].setdefault(h, []).append(True)
             gw_home_map[gw].setdefault(a, []).append(False)
 
-        # ── Team rolling stats (last ≤6 finished matches) ───────────────────
-        team_rolling = _build_team_rolling(fixtures)
-        attacks = [v["attack_xg6"] for v in team_rolling.values() if v["attack_xg6"] > 0]
-        defences = [v["defence_xg6"] for v in team_rolling.values() if v["defence_xg6"] > 0]
-        league_avg_attack = round(sum(attacks) / len(attacks), 3) if attacks else LEAGUE_AVG_GOALS
-        league_avg_defence = round(sum(defences) / len(defences), 3) if defences else LEAGUE_AVG_GOALS
-
-        # ── Odds API match xG (Tier 1) ───────────────────────────────────────
-        upcoming_fix_list = [f for f in fixtures if f.get("event") in upcoming_gws]
-        odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw)
-
-        # ── Per-GW match xG for each team ────────────────────────────────────
-        gw_match_xg = _build_gw_match_xg(
-            fixtures, upcoming_gws, team_rolling, league_avg_defence, odds_xg
-        )
-
         # ── Active players ───────────────────────────────────────────────────
         elements = bootstrap["elements"]
         active_players = [
@@ -613,9 +635,35 @@ async def fetch_all_data() -> dict:
         elem_lookup = {p["id"]: p for p in active_players}
 
         # ── xG-based goal/assist shares (Phase 1) ─────────────────────────────
+        # Computed here (before Team rolling stats, below) because Tier 2's model
+        # now runs on real xG too (Phase 4) — team_xg_by_fixture needs to exist
+        # before build_team_xg_rolling can use it.
         team_xg_by_fixture, team_xa_by_fixture = build_team_xg_totals(
             [(team_lookup.get(pid), history) for pid, history, _ in results]
         )
+
+        # ── Team rolling stats (last ≤6 finished matches) ───────────────────
+        # _build_team_rolling (actual goals) still feeds the Team Overview tab's
+        # GF6/GA6 display, which is meant to show real goals. Tier 2's own model
+        # input (Phase 4) is build_team_xg_rolling — real xG summed from every
+        # player's own FPL-reported xG per fixture, per the review's "use xG
+        # rather than goals as the target" recommendation.
+        team_rolling = _build_team_rolling(fixtures)
+        team_xg_rolling = build_team_xg_rolling(fixtures, team_xg_by_fixture)
+        attacks = [v["attack_xg6"] for v in team_xg_rolling.values() if v["attack_xg6"] > 0]
+        defences = [v["defence_xg6"] for v in team_xg_rolling.values() if v["defence_xg6"] > 0]
+        league_avg_attack = round(sum(attacks) / len(attacks), 3) if attacks else LEAGUE_AVG_GOALS
+        league_avg_defence = round(sum(defences) / len(defences), 3) if defences else LEAGUE_AVG_GOALS
+
+        # ── Odds API match xG (Tier 1) ───────────────────────────────────────
+        upcoming_fix_list = [f for f in fixtures if f.get("event") in upcoming_gws]
+        odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw)
+
+        # ── Per-GW match xG for each team ────────────────────────────────────
+        gw_match_xg = _build_gw_match_xg(
+            fixtures, upcoming_gws, team_xg_rolling, league_avg_defence, odds_xg
+        )
+
         position_priors = build_position_priors(
             [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
         )

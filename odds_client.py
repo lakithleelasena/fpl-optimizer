@@ -16,6 +16,7 @@ from datetime import datetime
 import httpx
 
 from config import ODDS_API_KEY, ODDS_API_URL
+from team_xg_model import devig_shin, fit_team_lambdas
 
 ODDS_CACHE_FILE = "odds_cache.json"
 # Historical archive: {gw_str: {fetched_at, data}} — one entry per gameweek,
@@ -183,8 +184,13 @@ def _implied_total_goals(outcomes: list[dict]) -> float:
     return round(line + (over_prob - 0.5) * 1.0, 2)
 
 
-def _home_share_from_h2h(outcomes: list[dict], home_name: str) -> float:
-    """Devig h2h odds and return home expected goal share (home_win + 0.5*draw)."""
+def _h2h_probs(outcomes: list[dict], home_name: str) -> tuple[float, float, float] | None:
+    """
+    Devig h2h (1X2) odds using Shin's method (Phase 4, PREDICTION_MODEL_PLAN.md) —
+    corrects for the market's favorite-longshot bias better than simple
+    proportional normalisation. Returns (p_home, p_draw, p_away), or None if
+    prices are missing.
+    """
     home_price = draw_price = away_price = None
     for o in outcomes:
         n = o["name"]
@@ -196,11 +202,9 @@ def _home_share_from_h2h(outcomes: list[dict], home_name: str) -> float:
         else:
             away_price = p
     if not home_price or not draw_price or not away_price:
-        return 0.5
-    inv = 1/home_price + 1/draw_price + 1/away_price
-    home_prob = (1/home_price) / inv
-    draw_prob = (1/draw_price) / inv
-    return home_prob + 0.5 * draw_prob
+        return None
+    p_home, p_draw, p_away = devig_shin([1 / home_price, 1 / draw_price, 1 / away_price])
+    return p_home, p_draw, p_away
 
 
 def _extract_xg(bookmaker: dict, home_name: str) -> tuple[float, float] | None:
@@ -208,9 +212,18 @@ def _extract_xg(bookmaker: dict, home_name: str) -> tuple[float, float] | None:
     if "totals" not in markets:
         return None
     total_xg = _implied_total_goals(markets["totals"])
-    home_share = _home_share_from_h2h(markets["h2h"], home_name) if "h2h" in markets else 0.5
-    home_xg = max(0.2, round(total_xg * home_share, 2))
-    away_xg = max(0.2, round(total_xg * (1 - home_share), 2))
+    h2h_probs = _h2h_probs(markets["h2h"], home_name) if "h2h" in markets else None
+    if h2h_probs is not None:
+        p_home, _, _ = h2h_probs
+        # Joint Poisson(+Dixon-Coles) fit: holds the totals-market total fixed and
+        # solves for the home/away split that reproduces the 1X2 market's P(home
+        # win) — replaces the old linear "total x home_share" split, which ignored
+        # the shape of the Poisson distribution entirely.
+        home_xg, away_xg = fit_team_lambdas(total_xg, p_home)
+    else:
+        home_xg = away_xg = total_xg / 2
+    home_xg = max(0.2, round(home_xg, 2))
+    away_xg = max(0.2, round(away_xg, 2))
     return home_xg, away_xg
 
 

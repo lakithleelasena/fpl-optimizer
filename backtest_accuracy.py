@@ -30,9 +30,9 @@ from config import (
 )
 import bonus_model
 from fpl_client import (
-    _build_team_rolling,
     build_minutes_priors,
     build_position_priors,
+    build_team_xg_rolling,
     build_team_xg_totals,
     compute_card_rate,
     compute_defcon_hit_rate,
@@ -84,23 +84,34 @@ def _sample_count_per_gw(rows: list[dict], key: str) -> dict[int, int]:
 def compute_team_xg_backtest(
     fixtures: list[dict],
     teams: dict[int, str],
+    raw_histories: dict[int, list[dict]],
     odds_weight: float = W_ODDS_WEIGHT,
 ) -> dict:
     """
     For each completed gameweek, reconstruct what each tier would have predicted for
     every team using ONLY fixtures finished before that gameweek, then score against
     the actual goals scored. Tier 2's rolling window grows (0..6 games) exactly as
-    fpl_client._build_team_rolling already behaves when given a limited fixture list.
+    fpl_client.build_team_xg_rolling already behaves when given a limited fixture
+    list. Tier 2 uses real xG (Phase 4, PREDICTION_MODEL_PLAN.md) — summed from
+    every player's own FPL-reported xG per fixture — matching the live pipeline
+    exactly, not actual goals scored/conceded.
     """
     finished = [f for f in fixtures if f.get("finished") and f.get("team_h_score") is not None]
     completed_gws = sorted({f["event"] for f in finished if f.get("event")})
     odds_history = load_odds_history()
 
+    # Built once globally from the full (not gameweek-truncated) history — safe,
+    # see build_team_xg_totals docstring: a lookup only ever hits fixtures already
+    # known to be prior to whatever target gameweek is being scored below.
+    team_xg_by_fixture, _ = build_team_xg_totals(
+        [(hist[0].get("team_id") if hist else None, hist) for hist in raw_histories.values()]
+    )
+
     rows: list[dict] = []
 
     for target_gw in completed_gws:
         prior_fixtures = [f for f in finished if f["event"] < target_gw]
-        team_rolling = _build_team_rolling(prior_fixtures)
+        team_rolling = build_team_xg_rolling(prior_fixtures, team_xg_by_fixture)
         defences = [v["defence_xg6"] for v in team_rolling.values() if v["defence_xg6"] > 0]
         league_avg_defence = (sum(defences) / len(defences)) if defences else LEAGUE_AVG_GOALS
 
