@@ -424,3 +424,65 @@ determinable yet — best 0.3, bootstrap 0.0-1.0 — and was deliberately left a
 **Ideas not yet done.** Shrink Tier 2 toward the league average; re-tune `odds_weight` once ≥30
 fixtures have odds; add `p_60_plus`/`exp_minutes` to player backtest rows for minutes diagnostics;
 check top-end player over-prediction; DefCon/bonus tuning.
+
+---
+
+## Player-points tuning from the component backtest (2026-10-08, after GW5)
+
+**Method.** The Prediction Accuracy tab now splits predicted and actual points into FPL
+scoring components (appearance, goals, assists, clean sheet, goals conceded, saves, bonus,
+DefCon, cards, other) so error can be located instead of just measured. Actual components
+reconcile exactly to `total_points`. Use the "All predictions" view for calibration — the
+"players who played" view conditions on an outcome the model predicts (its predictions
+include the chance of not playing), so minutes-driven components look under-predicted there
+by construction.
+
+**Gaps found (GW2-5, 1,467 player-gameweeks, bias = predicted − actual, points):**
+appearance −0.154, clean sheet −0.101 (GKP −0.28, DEF −0.17), defender goals +0.126 (MAE
+worse than guessing the average), assists −0.043 (FWD −0.12), DefCon −0.051 (DEF −0.09),
+cards +0.046, saves −0.005, bonus ≈ 0 overall; net −0.23/player-gameweek. Form adjustment is
+zero for GW1-5 by construction (needs >4 prior games).
+
+**Done.**
+1. *Minutes* (`MINUTES_SHRINKAGE_GAMES` 6 → 1.5): last season's start rate held ~2/3 of the
+   weight after 3 games, under-predicting regulars (60% predicted P(60+) happened 73% of the
+   time). P(60+) Brier 0.182 → 0.152; appearance bias −0.154 → −0.049; player MAE 1.956 → 1.911.
+   Flat for k = 1-2 (k=1 has the best Brier, 0.145); 1.5 chosen conservatively.
+2. *Share-prior reliability* (`SHARE_PRIOR_RELIABILITY_N90` = 6): last season's xG share was
+   computed per minute played, so tiny samples exploded (Tomiyasu: 6 min, 0.18 xG → share
+   2.0 → ~1.5 predicted goals/match; 10 players had a prior share > 0.30). Now blended
+   toward the position average with weight n90/(n90+6). DEF goals MAE 0.411 → 0.368, goals
+   MAE 0.625 → 0.607, player MAE 1.992 → 1.956. The remaining DEF over-prediction (+0.095)
+   is mostly finishing luck — defenders scored 13 goals from ~20 xG against ~24 predicted.
+3. *Stale last season* (`drop_stale_past_seasons`): only the latest completed season counts
+   as "last season"; players whose latest record is older (29 players) use the position
+   average. MAE 1.911 → 1.909, Brier 0.1521 → 0.1513.
+
+Combined: player-points MAE 1.992 → 1.909 (starters 2.449 → 2.396), P(60+) Brier 0.1835 → 0.1513.
+
+**Considered and not changed.**
+- *Clean sheets.* Team-level predicted CS rate 25.9% vs 30% actual (26 vs 30 of 100 team-
+  matches) is ~1 standard error — noise at this sample. Part of the player-level gap was the
+  minutes under-prediction (now fixed); the remainder is not significant. Revisit around
+  GW12-15; if still ~25% low, replace `exp(-λ)` with the P(0 goals) from Phase 4's joint
+  Dixon-Coles fit rather than adding an ad-hoc multiplier.
+- *Dropping last-season priors.* Removing the minutes prior changes almost nothing at k=1.5
+  (MAE +0.006, Brier equal) but it still helps players with no appearances yet; removing the
+  share prior hurts goals MAE (0.607 → 0.638, mostly GW2-3, converging by GW4-5) and it fades
+  automatically with n90. Minutes from this season alone is clearly worse (MAE 1.971). Re-test
+  around GW10; the share prior should matter little by then.
+- *Share k (6 → 2-3).* Slightly better goals MAE but worse assists/early GWs, total MAE within
+  0.003 — noise.
+
+**Next candidates (not done).**
+- Assists under-predicted in every position (FWD worst: 0.087 vs 0.206) — check assist share
+  vs xA, and whether xA understates real assists.
+- DefCon under-predicted for defenders (0.235 vs 0.326) — hit-rate is empirical; check
+  recency weighting and whether the exp_minutes scaling is double-penalising.
+- Cards under-penalised by 0.03-0.09 per player-gameweek (also missing red cards).
+- GKP saves slightly worse than guessing the mean (MAE 0.697 vs 0.659).
+- Bonus for MID/FWD is no better than the mean — consider the Monte Carlo v2.
+- Minutes: add per-player expected-minutes diagnostics; a "never appeared" cohort (201
+  player-gameweeks) is where the prior matters most and is only partly covered by the backtest.
+- Re-run this whole table after GW10: all conclusions above rest on 4 target gameweeks,
+  in-sample, with one or two tuned constants each.
