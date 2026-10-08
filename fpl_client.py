@@ -123,6 +123,26 @@ def build_team_xg_rolling(
     return rolling
 
 
+def drop_stale_past_seasons(
+    results: list[tuple[int, list[dict], list[dict]]],
+) -> list[tuple[int, list[dict], list[dict]]]:
+    """
+    Keep only the most recent completed season (the max season_name across all players)
+    in each player's history_past; a player whose latest record is older than that —
+    missed the whole of last season (long injury, loan, returned from abroad) — ends up
+    with an empty history_past, so every prior falls back to the position average
+    instead of treating a season or two ago as "last season" (e.g. a 2024/25 record built
+    on 6 minutes, or a 2023/24 start rate that no longer describes the player's role).
+    Every consumer only ever reads the latest entry, so nothing else is lost.
+    """
+    seasons = [s.get("season_name", "") for _, _, hp in results for s in (hp or [])]
+    latest = max(seasons, default="")
+    return [
+        (pid, hist, [s for s in (hp or []) if s.get("season_name", "") == latest])
+        for pid, hist, hp in results
+    ]
+
+
 def _build_player_stats(
     history: list[dict],
     history_past: list[dict] | None = None,
@@ -720,7 +740,7 @@ async def fetch_all_data() -> dict:
         # Fetch histories concurrently
         sem = asyncio.Semaphore(SEMAPHORE_LIMIT)
         tasks = [_fetch_player_history(client, sem, p["id"]) for p in active_players]
-        results = await asyncio.gather(*tasks)
+        results = drop_stale_past_seasons(await asyncio.gather(*tasks))
 
         team_lookup = {p["id"]: p["team"] for p in active_players}
         pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}
