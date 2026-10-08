@@ -386,3 +386,41 @@ comparison, not just a code review.
 No cross-season historical data import planned (explicitly out of scope per this
 season-only backtesting decision). `odds_history.json` continues accumulating one
 snapshot per gameweek going forward as the only historical-odds source we use.
+
+---
+
+## Post-plan tuning (2026-10-08, after GW5)
+
+First backtest with a meaningful sample (GW1-5, 100 team-matches) found the team-goal
+tiers weakly discriminating, and a large *level* bias in the blend.
+
+**Finding.** Tier 3 (FDR fallback) averaged ~0.86 goals/team against 1.41 actual: the old
+`1.35 × (5-FDR)/3` treated the average fixture as FDR 2, but the season's mean FDR is 3.1.
+With the old 10-game linear taper handing Tier 3 most of the weight early, the production
+blend's bias was −0.386 goals/team (Poisson deviance 1.561).
+
+**Changes.**
+- Tier 3 is now centred: `league_avg × max(0.3, 1 + FDR_SENSITIVITY × (mean_fdr − fdr))`, with
+  `league_avg` = live season mean goals/team shrunk toward the 1.35 prior (weight
+  `LEAGUE_AVG_SHRINK_MATCHES` = 40 team-matches) and `mean_fdr` from the full fixture list.
+- Tier 2 vs Tier 3 weight is `n/(n+TIER2_SHRINKAGE_GAMES)` (6) instead of the 10-game taper —
+  same shrinkage family as Phases 1 and 3; reproduces the data-optimal ~0.25-0.3 at 1-4 games.
+- Helpers (`compute_league_avg_goals`, `compute_mean_fdr`, `tier2_xg`, `tier3_xg`, `tier2_weight`)
+  are shared between `fpl_client.py` and `backtest_accuracy.py` so live and backtest can't drift.
+- The team-xG backtest endpoint now returns `summary` (per-tier Poisson deviance, bias, skill vs a
+  league-average baseline) and `weight_fit` (Tier 2-vs-3 deviance curve, three-way mix, `odds_weight`
+  sweep, fixture-level bootstrap ranges), shown on the Prediction Accuracy tab.
+
+**Result (GW1-5).** Production deviance 1.561 → 1.352, bias −0.386 → −0.001. Skill vs the
+league-average baseline is only ≈ +1.4%, so the models barely beat "predict the league mean" —
+goal counts are very noisy. Tier 2 alone is worse than baseline (−14%). Player-points backtest is
+essentially neutral (MAE 1.986 → 1.992; starters 2.449 unchanged), as expected: team-xG level is
+second-order for player points; the per-position signed-error shift is the visible effect.
+
+**Caveats.** Only 100 team-matches; fits are in-sample; `FDR_SENSITIVITY` = 0.25 was chosen after
+looking at the same data. Tier 1 has only 10 fixtures (GW5), so `odds_weight` (default 0.6) is not
+determinable yet — best 0.3, bootstrap 0.0-1.0 — and was deliberately left alone. Re-run after GW6+.
+
+**Ideas not yet done.** Shrink Tier 2 toward the league average; re-tune `odds_weight` once ≥30
+fixtures have odds; add `p_60_plus`/`exp_minutes` to player backtest rows for minutes diagnostics;
+check top-end player over-prediction; DefCon/bonus tuning.

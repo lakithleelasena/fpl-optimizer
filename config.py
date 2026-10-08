@@ -12,13 +12,25 @@ ELEMENT_SUMMARY_URL = f"{BASE_URL}/element-summary/{{player_id}}/"
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/"
-LEAGUE_AVG_GOALS = 1.35  # EPL avg goals per team per match (Tier 3 pre-season fallback)
+LEAGUE_AVG_GOALS = 1.35  # EPL avg goals per team per match — pre-season prior; replaced by the live season average as games are played (see LEAGUE_AVG_SHRINK_MATCHES)
 LAST_SEASON_GAMES = 38  # full EPL season length, used for pre-season exp_minutes/exp_start_pct fallback
 
 # Team-level match xG model (fpl_client._model_xg / _build_gw_match_xg)
 HOME_ADV_MULT = 1.10   # home teams score ~10% more than a neutral venue would suggest
 AWAY_ADV_MULT = 0.90   # away teams score ~10% less
-TAPER_GAMES = 10        # games until a team's Tier 2 rolling average fully replaces the Tier 3 prior
+# Tier 2 (rolling xG) vs Tier 3 (FDR) model blend, per team: w_tier2 = n / (n + TIER2_SHRINKAGE_GAMES),
+# n = games the team has played. Replaces a linear 10-game taper that gave Tier 2 full weight
+# at game 10 and (with a low-biased Tier 3) dragged early-season predictions ~0.4 goals low.
+# Backtest GW2-5 (Tier 3 centred): best static Tier 2 weight ~0.3 at 1-4 games played, which
+# n/(n+6) reproduces (0.14-0.40) — and it's the same shrinkage family as Phases 1 and 3.
+TIER2_SHRINKAGE_GAMES = 6.0
+# Tier 3 sensitivity: each FDR point away from the fixture-list mean FDR moves the prediction
+# by +/- this fraction of the league-average goals (centred, so Tier 3 averages the league mean).
+FDR_SENSITIVITY = 0.25
+# Live league-average goals per team: blend this season's actual mean with LEAGUE_AVG_GOALS,
+# weighting the prior as this many team-matches (40 = two gameweeks), so one wild gameweek
+# doesn't swing Tier 3's level.
+LEAGUE_AVG_SHRINK_MATCHES = 40
 W_ODDS_WEIGHT = 0.6     # default blend weight for Tier 1 (odds) vs model (Tier 2/3) xG, when odds are available
 
 BUDGET = 1000  # £100.0m stored as tenths

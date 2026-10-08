@@ -344,7 +344,9 @@
                     production blend separately against actual goals scored, for every completed
                     gameweek — using only data available before each week. Tier 1 will be blank
                     or sparse for early gameweeks since historical odds only started being
-                    archived from GW5 onward; it fills in as more weeks complete.
+                    archived from GW5 onward; it fills in as more weeks complete. Below the
+                    chart, a weight-fit shows which blend of the tiers would have scored best
+                    (Poisson deviance — lower is better — against a league-average baseline).
                 </p>
                 <button class="btn-optimize" id="btn-team-xg-backtest" style="max-width:260px">Run Team xG Backtest</button>
 
@@ -352,6 +354,8 @@
                     <div class="chart-legend" id="team-xg-legend"></div>
                     <div id="team-xg-chart"></div>
                     <p class="section-hint" id="team-xg-samples"></p>
+
+                    <div id="team-xg-weights"></div>
 
                     <div style="overflow-x:auto;margin-top:16px">
                         <h2 style="font-size:16px">Top 5 Over/Under-Predicted per Gameweek <small style="font-weight:400;color:#8b949e">(Error = Production − Actual)</small></h2>

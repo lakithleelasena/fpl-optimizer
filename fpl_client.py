@@ -12,15 +12,17 @@ from config import (
     CACHE_TTL_SECONDS,
     DEFCON_THRESHOLD,
     ELEMENT_SUMMARY_URL,
+    FDR_SENSITIVITY,
     FIXTURES_URL,
     HOME_ADV_MULT,
     LAST_SEASON_GAMES,
     LEAGUE_AVG_GOALS,
+    LEAGUE_AVG_SHRINK_MATCHES,
     MINUTES_SHRINKAGE_GAMES,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
     SHARE_SHRINKAGE_K,
-    TAPER_GAMES,
+    TIER2_SHRINKAGE_GAMES,
 )
 import bonus_model
 from odds_client import fetch_odds_xg
@@ -484,31 +486,80 @@ def compute_minutes_model(
     return exp_start_pct, exp_minutes, p_60_plus, p_1_to_59
 
 
+def compute_league_avg_goals(fixtures: list[dict]) -> float:
+    """
+    Live league-average goals per team per match from finished fixtures, shrunk
+    toward the LEAGUE_AVG_GOALS prior (weight LEAGUE_AVG_SHRINK_MATCHES team-matches)
+    so one high- or low-scoring gameweek doesn't swing it. Tier 3's level anchors on
+    this — it was previously a fixed 1.35 combined with an FDR multiplier that
+    averaged ~0.67, making Tier 3 predict ~0.86 goals against ~1.41 actual.
+    """
+    finished = [f for f in fixtures if f.get("finished") and f.get("team_h_score") is not None]
+    n = 2 * len(finished)
+    if n == 0:
+        return LEAGUE_AVG_GOALS
+    mean = sum(f["team_h_score"] + f["team_a_score"] for f in finished) / n
+    return (n * mean + LEAGUE_AVG_SHRINK_MATCHES * LEAGUE_AVG_GOALS) / (n + LEAGUE_AVG_SHRINK_MATCHES)
+
+
+def compute_mean_fdr(fixtures: list[dict]) -> float:
+    """Mean FDR over every side of every fixture in the season list (known in advance,
+    so no look-ahead) — Tier 3 centres on this so an average-difficulty fixture predicts
+    the league-average goals. It's ~3.1 this season, not exactly 3."""
+    vals = [v for f in fixtures for v in (f.get("team_h_difficulty"), f.get("team_a_difficulty")) if v]
+    return sum(vals) / len(vals) if vals else 3.0
+
+
+def tier3_xg(fdr: float, league_avg: float, mean_fdr: float = 3.0) -> float:
+    """
+    Tier 3 (FDR fallback): the live league-average goals, scaled up or down by
+    FDR_SENSITIVITY per FDR point away from the mean-difficulty fixture. Centred, so it
+    averages the league mean (the old `LEAGUE_AVG_GOALS * (5-FDR)/3` averaged ~0.67x).
+    """
+    return league_avg * max(0.3, 1 + FDR_SENSITIVITY * (mean_fdr - fdr))
+
+
+def tier2_xg(
+    attack_xg6: float | None, opp_defence_xg6: float | None, league_avg_defence: float, is_home: bool,
+) -> float | None:
+    """Tier 2 (rolling real xG): attack x (opponent defence / league-average defence) x
+    home/away multiplier. None if either team has no rolling data yet. A genuine 0.0
+    average is valid data — hence explicit None checks, not truthiness."""
+    if attack_xg6 is None or opp_defence_xg6 is None or league_avg_defence <= 0:
+        return None
+    mult = HOME_ADV_MULT if is_home else AWAY_ADV_MULT
+    return attack_xg6 * (opp_defence_xg6 / league_avg_defence) * mult
+
+
+def tier2_weight(games_played: int) -> float:
+    """Weight on Tier 2 in the Tier 2/3 model blend: n / (n + TIER2_SHRINKAGE_GAMES) —
+    the same shrinkage form as Phases 1 and 3. Replaces a linear 10-game taper."""
+    return games_played / (games_played + TIER2_SHRINKAGE_GAMES) if games_played > 0 else 0.0
+
+
 def _model_xg(
-    h_id: int, a_id: int, h_fdr: int, a_fdr: int, team_rolling: dict[int, dict], league_avg_defence: float,
+    h_id: int, a_id: int, h_fdr: int, a_fdr: int, team_rolling: dict[int, dict],
+    league_avg_defence: float, league_avg: float, mean_fdr: float,
 ) -> tuple[float, float]:
     """
     Model-based (non-market) expected goals for one fixture, blending:
-      Tier 2: rolling 6-game averages × opponent defensive factor × home/away factor
-      Tier 3: FDR-based fallback
-    Tier 2 is phased in per team via a linear taper over its first TAPER_GAMES
-    played this season (0 games = pure Tier 3, TAPER_GAMES+ = pure Tier 2),
+      Tier 2: rolling real-xG averages x opponent defensive factor x home/away factor
+      Tier 3: centred FDR fallback (live league-average goals scaled by FDR)
+    Tier 2's weight grows with each team's games played, n/(n+TIER2_SHRINKAGE_GAMES),
     rather than switching all-or-nothing the moment a team has any data.
     """
-    # Tier 3: FDR fallback — always available, used as the pre-season prior
-    h_mult = max(0.2, (5 - h_fdr) / 3)
-    a_mult = max(0.2, (5 - a_fdr) / 3)
-    tier3_h = LEAGUE_AVG_GOALS * h_mult
-    tier3_a = LEAGUE_AVG_GOALS * a_mult
+    tier3_h = tier3_xg(h_fdr, league_avg, mean_fdr)
+    tier3_a = tier3_xg(a_fdr, league_avg, mean_fdr)
 
     h_roll = team_rolling.get(h_id)
     a_roll = team_rolling.get(a_id)
-    if h_roll and a_roll and h_roll["attack_xg6"] > 0 and a_roll["attack_xg6"] > 0 and league_avg_defence > 0:
-        # Tier 2: rolling averages × opponent defensive factor × home/away factor
-        tier2_h = h_roll["attack_xg6"] * (a_roll["defence_xg6"] / league_avg_defence) * HOME_ADV_MULT
-        tier2_a = a_roll["attack_xg6"] * (h_roll["defence_xg6"] / league_avg_defence) * AWAY_ADV_MULT
-        w_h = min(1.0, h_roll["games_played"] / TAPER_GAMES)
-        w_a = min(1.0, a_roll["games_played"] / TAPER_GAMES)
+    tier2_h = tier2_xg(h_roll["attack_xg6"] if h_roll else None,
+                       a_roll["defence_xg6"] if a_roll else None, league_avg_defence, True)
+    tier2_a = tier2_xg(a_roll["attack_xg6"] if a_roll else None,
+                       h_roll["defence_xg6"] if h_roll else None, league_avg_defence, False)
+    if tier2_h is not None and tier2_a is not None:
+        w_h = tier2_weight(h_roll["games_played"])
+        w_a = tier2_weight(a_roll["games_played"])
         model_h = w_h * tier2_h + (1 - w_h) * tier3_h
         model_a = w_a * tier2_a + (1 - w_a) * tier3_a
     else:
@@ -523,12 +574,14 @@ def _build_gw_match_xg(
     team_rolling: dict[int, dict],
     league_avg_defence: float,
     odds_xg: dict[int, dict[int, tuple[float, float]]],
+    league_avg: float,
+    mean_fdr: float,
 ) -> dict[int, dict[int, dict]]:
     """
     Compute per-GW per-team model xG and odds xG (kept separate — the final
     blend between them is applied later, per-request, using the user's
     odds_weight slider rather than baked into this cached fetch):
-      model_team_xg/model_opp_xg: Tier 2 (rolling averages) tapered against
+      model_team_xg/model_opp_xg: Tier 2 (rolling real xG) blended with centred
         Tier 3 (FDR fallback) by each team's games played this season — see _model_xg.
       odds_team_xg/odds_opp_xg: Tier 1 (Odds API), or None if unavailable for the fixture.
 
@@ -547,7 +600,9 @@ def _build_gw_match_xg(
         h_fdr = fix.get("team_h_difficulty", 3)
         a_fdr = fix.get("team_a_difficulty", 3)
 
-        model_h_xg, model_a_xg = _model_xg(h_id, a_id, h_fdr, a_fdr, team_rolling, league_avg_defence)
+        model_h_xg, model_a_xg = _model_xg(
+            h_id, a_id, h_fdr, a_fdr, team_rolling, league_avg_defence, league_avg, mean_fdr,
+        )
 
         odds_fix = odds_xg.get(fid, {})
         if h_id in odds_fix:
@@ -691,8 +746,13 @@ async def fetch_all_data() -> dict:
         odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw)
 
         # ── Per-GW match xG for each team ────────────────────────────────────
+        # Tier 3 anchors on the live league-average goals per team and the fixture
+        # list's actual mean FDR (see tier3_xg), not a fixed 1.35 and an assumed FDR of 3.
+        league_avg_goals_now = compute_league_avg_goals(fixtures)
+        mean_fdr = compute_mean_fdr(fixtures)
         gw_match_xg = _build_gw_match_xg(
-            fixtures, upcoming_gws, team_xg_rolling, league_avg_defence, odds_xg
+            fixtures, upcoming_gws, team_xg_rolling, league_avg_defence, odds_xg,
+            league_avg_goals_now, mean_fdr,
         )
 
         position_priors = build_position_priors(

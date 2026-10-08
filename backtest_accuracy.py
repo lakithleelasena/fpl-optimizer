@@ -8,24 +8,23 @@ Two independent stages, matching the pipeline's own two steps:
      player per GW, built on top of stage 1's reconstructed team xG.
 
 Everything here is read-only and backtest-only — it does not touch fpl_client.py's live
-prediction path. Tier 2/Tier 3 formulas are intentionally re-implemented (small, ~5 lines
-each) rather than imported from fpl_client._model_xg, because that function only returns
-the already-taper-blended result — the whole point here is to see the tiers separately.
-Keep these in sync with fpl_client._model_xg / _build_team_rolling if those change.
+prediction path. Tier 2/Tier 3 use the SAME helper functions as live (fpl_client.tier2_xg /
+tier3_xg / tier2_weight), called individually rather than via _model_xg (which only returns
+the already-blended result) so each tier can be scored separately — sharing the helpers
+means the backtest can't silently drift from what the live app does.
 """
 from __future__ import annotations
 
 import math
+import random
+import statistics
 from collections import defaultdict
 
 from config import (
-    AWAY_ADV_MULT,
-    HOME_ADV_MULT,
     LEAGUE_AVG_GOALS,
     PENALTY_AWARD_RATE_PER_MATCH,
     PENALTY_SAVE_PTS,
     PENALTY_SAVE_RATE,
-    TAPER_GAMES,
     W_ATK_FACTOR,
     W_CS_FACTOR,
     W_FORM_FACTOR,
@@ -39,9 +38,14 @@ from fpl_client import (
     build_team_xg_totals,
     compute_card_rate,
     compute_defcon_hit_rate,
+    compute_league_avg_goals,
+    compute_mean_fdr,
     compute_minutes_model,
     compute_saves_rate,
     compute_xg_share,
+    tier2_weight,
+    tier2_xg,
+    tier3_xg,
 )
 from odds_client import load_odds_history
 from predictor import _CS_PTS, _PTS_PER_GOAL, _expected_floor_half_poisson
@@ -51,23 +55,6 @@ FORM_WINDOW = 4  # games used to approximate FPL's own "form" stat (see note in 
 
 
 # ─── Stage 1: Team xG accuracy ───────────────────────────────────────────────
-
-def _tier3_xg(fdr: int) -> float:
-    """FDR-based fallback — identical formula to fpl_client._model_xg's Tier 3."""
-    mult = max(0.2, (5 - fdr) / 3)
-    return round(LEAGUE_AVG_GOALS * mult, 3)
-
-
-def _tier2_xg(attack_xg6: float | None, opp_defence_xg6: float | None,
-              league_avg_defence: float, is_home: bool) -> float | None:
-    """Pure rolling-form estimate, un-tapered — None if either team has no rolling data yet.
-    A genuine 0.0 average (team blanked/conceded-none in its games so far) is valid data
-    and must NOT be treated the same as "no data" — hence explicit None checks, not truthiness."""
-    if attack_xg6 is None or opp_defence_xg6 is None or league_avg_defence <= 0:
-        return None
-    mult = HOME_ADV_MULT if is_home else AWAY_ADV_MULT
-    return round(attack_xg6 * (opp_defence_xg6 / league_avg_defence) * mult, 3)
-
 
 def _mae_per_gw(rows: list[dict], key: str) -> dict[int, float]:
     per_gw: dict[int, list[float]] = defaultdict(list)
@@ -84,6 +71,127 @@ def _sample_count_per_gw(rows: list[dict], key: str) -> dict[int, int]:
         if r.get(key) is not None:
             per_gw[r["gw"]] += 1
     return dict(per_gw)
+
+
+# ── Scoring + tier-weight fitting ─────────────────────────────────────────────
+# MAE rewards predicting a constant (a league-average guess beats every tier on MAE at
+# this sample size), so tiers are also scored with Poisson deviance — the natural loss
+# for goal counts — plus bias, and compared with the league-average baseline.
+
+def _poisson_deviance(pred: float, y: float) -> float:
+    pred = max(pred, 0.05)
+    return 2 * ((y * math.log(y / pred) if y > 0 else 0.0) - (y - pred))
+
+
+def _score(preds: list[float], ys: list[float]) -> dict:
+    n = len(ys)
+    if n == 0:
+        return {"n": 0, "deviance": None, "mae": None, "bias": None}
+    return {
+        "n": n,
+        "deviance": round(sum(_poisson_deviance(p, y) for p, y in zip(preds, ys)) / n, 4),
+        "mae": round(sum(abs(p - y) for p, y in zip(preds, ys)) / n, 4),
+        "bias": round(sum(p - y for p, y in zip(preds, ys)) / n, 4),
+    }
+
+
+def _tier_summary(rows: list[dict]) -> dict:
+    """Each tier scored over the rows where it exists, next to the league-average
+    baseline over those SAME rows. skill = 1 - deviance/baseline_deviance (>0 beats
+    just guessing the league average)."""
+    out = {}
+    for key in ("tier1", "tier2", "tier3", "model", "production"):
+        sub = [r for r in rows if r.get(key) is not None]
+        ys = [r["actual_goals"] for r in sub]
+        sc = _score([r[key] for r in sub], ys)
+        base = _score([r["league_avg"] for r in sub], ys)
+        sc["baseline_deviance"] = base["deviance"]
+        sc["skill"] = (round(1 - sc["deviance"] / base["deviance"], 4)
+                       if sc["deviance"] is not None and base["deviance"] else None)
+        out[key] = sc
+    return out
+
+
+def _dev_for_weights(sub: list[dict], keys: tuple[str, ...], weights: tuple[float, ...]) -> float:
+    return sum(
+        _poisson_deviance(sum(w * r[k] for k, w in zip(keys, weights)), r["actual_goals"]) for r in sub
+    ) / len(sub)
+
+
+def _bootstrap_best(sub: list[dict], keys: tuple[str, str], grid: list[float], n_boot: int, seed: int) -> dict | None:
+    """Resample whole FIXTURES (a fixture's two team-rows share a match, so they're not
+    independent) and refit the best weight on the first key each time."""
+    by_fix: dict[int, list[dict]] = defaultdict(list)
+    for r in sub:
+        by_fix[r["fixture_id"]].append(r)
+    fids = list(by_fix)
+    if len(fids) < 5:
+        return None
+    rng = random.Random(seed)
+    best_ws = []
+    for _ in range(n_boot):
+        samp = [r for f in rng.choices(fids, k=len(fids)) for r in by_fix[f]]
+        best_ws.append(min(grid, key=lambda w: _dev_for_weights(samp, keys, (w, 1 - w))))
+    best_ws.sort()
+    q = lambda p: best_ws[min(len(best_ws) - 1, int(p * len(best_ws)))]
+    return {"median": q(0.5), "p10": q(0.1), "p90": q(0.9), "n_boot": n_boot}
+
+
+def fit_tier_weights(rows: list[dict], n_boot: int = 300, seed: int = 1) -> dict:
+    """
+    What blend of the three tiers would have scored best over the backtested gameweeks?
+      - tier2_vs_tier3: static Tier 2 weight (rest Tier 3) over rows with both — the
+        window with the most data (Tier 2 needs a game of history, so GW2+).
+      - three_way: Tier 1/2/3 over rows that have all three (Tier 1 only exists from the
+        first gameweek whose odds were archived), plus an odds_weight sweep against the
+        production Tier 2/3 model blend — the knob the live slider actually controls.
+    Weights are fit in-sample and the samples are small, so each carries a bootstrap range
+    and a `reliable` flag; treat low-n results as direction, not truth.
+    """
+    grid = [i / 20 for i in range(21)]
+
+    # --- Tier 2 vs Tier 3 ---
+    a = [r for r in rows if r.get("tier2") is not None]
+    t23: dict = {"n": len(a), "n_fixtures": len({r["fixture_id"] for r in a})}
+    if a:
+        curve = [{"w2": w, "deviance": round(_dev_for_weights(a, ("tier2", "tier3"), (w, 1 - w)), 4)} for w in grid]
+        best = min(curve, key=lambda c: c["deviance"])
+        ys = [r["actual_goals"] for r in a]
+        t23.update({
+            "curve": curve,
+            "best_w2": best["w2"],
+            "best_deviance": best["deviance"],
+            "bootstrap": _bootstrap_best(a, ("tier2", "tier3"), grid, n_boot, seed),
+            "league_avg_deviance": _score([r["league_avg"] for r in a], ys)["deviance"],
+            "production_model_deviance": _score([r["model"] for r in a], ys)["deviance"],
+            "reliable": len({r["fixture_id"] for r in a}) >= 30,
+        })
+
+    # --- Tier 1 / 2 / 3 ---
+    b = [r for r in rows if r.get("tier1") is not None and r.get("tier2") is not None]
+    three: dict = {"n": len(b), "n_fixtures": len({r["fixture_id"] for r in b}),
+                   "gameweeks": sorted({r["gw"] for r in b})}
+    if b:
+        ys = [r["actual_goals"] for r in b]
+        points = []
+        for i in range(21):
+            for j in range(21 - i):
+                w1, w2 = i / 20, j / 20
+                points.append({"w1": w1, "w2": w2, "w3": round(1 - w1 - w2, 2),
+                               "deviance": round(_dev_for_weights(b, ("tier1", "tier2", "tier3"), (w1, w2, 1 - w1 - w2)), 4)})
+        points.sort(key=lambda p: p["deviance"])
+        odds_curve = [{"odds_weight": w, "deviance": round(_dev_for_weights(b, ("tier1", "model"), (w, 1 - w)), 4)} for w in grid]
+        best_odds = min(odds_curve, key=lambda c: c["deviance"])
+        three.update({
+            "top": points[:5],
+            "odds_weight_curve": odds_curve,
+            "best_odds_weight": best_odds["odds_weight"],
+            "bootstrap_odds_weight": _bootstrap_best(b, ("tier1", "model"), grid, n_boot, seed),
+            "references": {k: _score([r[k] for r in b], ys) for k in ("tier1", "tier2", "tier3", "model", "league_avg", "production")},
+            "reliable": len({r["fixture_id"] for r in b}) >= 30,
+        })
+
+    return {"tier2_vs_tier3": t23, "three_way": three}
 
 
 def compute_team_xg_backtest(
@@ -112,6 +220,9 @@ def compute_team_xg_backtest(
         [(hist[0].get("team_id") if hist else None, hist) for hist in raw_histories.values()]
     )
 
+    # Season-long mean FDR (the fixture list is known in advance — no look-ahead).
+    mean_fdr = compute_mean_fdr(fixtures)
+
     rows: list[dict] = []
 
     for target_gw in completed_gws:
@@ -119,6 +230,8 @@ def compute_team_xg_backtest(
         team_rolling = build_team_xg_rolling(prior_fixtures, team_xg_by_fixture)
         defences = [v["defence_xg6"] for v in team_rolling.values() if v["defence_xg6"] > 0]
         league_avg_defence = (sum(defences) / len(defences)) if defences else LEAGUE_AVG_GOALS
+        # Live league-average goals as it was known BEFORE this gameweek.
+        league_avg = compute_league_avg_goals(prior_fixtures)
 
         gw_odds = odds_history.get(target_gw, {})
         gw_fixtures = [f for f in finished if f["event"] == target_gw]
@@ -130,23 +243,25 @@ def compute_team_xg_backtest(
             a_fdr = fix.get("team_a_difficulty", 3)
             actual_h, actual_a = fix["team_h_score"], fix["team_a_score"]
 
-            tier3_h, tier3_a = _tier3_xg(h_fdr), _tier3_xg(a_fdr)
+            tier3_h = tier3_xg(h_fdr, league_avg, mean_fdr)
+            tier3_a = tier3_xg(a_fdr, league_avg, mean_fdr)
 
             h_roll = team_rolling.get(h_id)
             a_roll = team_rolling.get(a_id)
-            tier2_h = _tier2_xg(h_roll["attack_xg6"] if h_roll else None,
-                                 a_roll["defence_xg6"] if a_roll else None, league_avg_defence, True)
-            tier2_a = _tier2_xg(a_roll["attack_xg6"] if a_roll else None,
-                                 h_roll["defence_xg6"] if h_roll else None, league_avg_defence, False)
+            tier2_h = tier2_xg(h_roll["attack_xg6"] if h_roll else None,
+                               a_roll["defence_xg6"] if a_roll else None, league_avg_defence, True)
+            tier2_a = tier2_xg(a_roll["attack_xg6"] if a_roll else None,
+                               h_roll["defence_xg6"] if h_roll else None, league_avg_defence, False)
 
-            # Production-equivalent taper blend of Tier 2/3 (mirrors fpl_client._model_xg)
+            # Production-equivalent blend of Tier 2/3 (same helpers as fpl_client._model_xg)
             if tier2_h is not None and tier2_a is not None:
-                w_h = min(1.0, h_roll["games_played"] / TAPER_GAMES)
-                w_a = min(1.0, a_roll["games_played"] / TAPER_GAMES)
+                w_h = tier2_weight(h_roll["games_played"])
+                w_a = tier2_weight(a_roll["games_played"])
                 model_h = w_h * tier2_h + (1 - w_h) * tier3_h
                 model_a = w_a * tier2_a + (1 - w_a) * tier3_a
             else:
                 model_h, model_a = tier3_h, tier3_a
+            model_h, model_a = max(0.2, model_h), max(0.2, model_a)
 
             odds_fix = gw_odds.get(fid, {})
             tier1_h = odds_fix.get(h_id, (None, None))[0]
@@ -155,16 +270,21 @@ def compute_team_xg_backtest(
             prod_h = (odds_weight * tier1_h + (1 - odds_weight) * model_h) if tier1_h is not None else model_h
             prod_a = (odds_weight * tier1_a + (1 - odds_weight) * model_a) if tier1_a is not None else model_a
 
+            def _r(v):
+                return round(v, 3) if v is not None else None
+
             rows.append({
                 "gw": target_gw, "fixture_id": fid, "team_id": h_id, "team": teams.get(h_id, "?"),
                 "opponent": teams.get(a_id, "?"), "is_home": True, "actual_goals": actual_h,
-                "tier1": tier1_h, "tier2": tier2_h, "tier3": tier3_h, "production": round(prod_h, 3),
+                "tier1": tier1_h, "tier2": _r(tier2_h), "tier3": _r(tier3_h),
+                "model": _r(model_h), "league_avg": _r(league_avg), "production": round(prod_h, 3),
                 "error": round(prod_h - actual_h, 3),
             })
             rows.append({
                 "gw": target_gw, "fixture_id": fid, "team_id": a_id, "team": teams.get(a_id, "?"),
                 "opponent": teams.get(h_id, "?"), "is_home": False, "actual_goals": actual_a,
-                "tier1": tier1_a, "tier2": tier2_a, "tier3": tier3_a, "production": round(prod_a, 3),
+                "tier1": tier1_a, "tier2": _r(tier2_a), "tier3": _r(tier3_a),
+                "model": _r(model_a), "league_avg": _r(league_avg), "production": round(prod_a, 3),
                 "error": round(prod_a - actual_a, 3),
             })
 
@@ -182,6 +302,8 @@ def compute_team_xg_backtest(
             "tier3": _sample_count_per_gw(rows, "tier3"),
         },
         "total_rows": len(rows),
+        "summary": _tier_summary(rows),
+        "weight_fit": fit_tier_weights(rows),
         "rows": rows,
     }
 

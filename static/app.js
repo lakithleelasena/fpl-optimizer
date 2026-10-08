@@ -634,6 +634,70 @@ function groupHeaderRow(label, colspan) {
     return `<tr><td colspan="${colspan}" style="background:#1c2128;font-weight:700;color:#8b949e;padding:8px 12px">${label}</td></tr>`;
 }
 
+// ─── Prediction Accuracy: tier-weight fit ─────────────────────────────────────
+
+// Bar list for a deviance curve (lower deviance = longer bar), best row highlighted.
+function devianceCurve(points, labelOf, devOf, isBest) {
+    const devs = points.map(devOf);
+    const lo = Math.min(...devs), hi = Math.max(...devs), range = hi - lo || 1;
+    return points.map((pt, i) => {
+        const d = devs[i];
+        const w = Math.max(4, Math.round((1 - (d - lo) / range) * 100));
+        const best = isBest(pt);
+        return `<div class="sens-row${best ? " sens-best" : ""}">
+            <span class="sens-val" style="width:54px">${labelOf(pt)}</span>
+            <div class="sens-bar-wrap"><div class="sens-bar" style="width:${w}%;background:${best ? "#00ff87" : "#58a6ff"}"></div></div>
+            <span class="sens-mae" style="width:56px">${d.toFixed(3)}</span>
+        </div>`;
+    }).join("");
+}
+
+function renderTierWeightFit(summary, fit) {
+    const f3 = v => (v == null ? "–" : v.toFixed(3));
+    const names = { tier1: "Tier 1 (odds)", tier2: "Tier 2 (rolling xG)", tier3: "Tier 3 (FDR, centred)",
+                    model: "Model blend (T2+T3)", production: "Production (live blend)" };
+    const sumRows = Object.entries(names).map(([k, label]) => {
+        const s = summary[k];
+        if (!s || !s.n) return "";
+        const skill = s.skill == null ? "–" : `${s.skill > 0 ? "+" : ""}${(s.skill * 100).toFixed(1)}%`;
+        const skillColor = s.skill > 0 ? "#00ff87" : "#ff6b6b";
+        return `<tr><td>${label}</td><td>${s.n}</td><td>${f3(s.deviance)}</td><td>${f3(s.baseline_deviance)}</td>
+            <td style="color:${skillColor};font-weight:600">${skill}</td><td>${f3(s.mae)}</td>
+            <td>${s.bias > 0 ? "+" : ""}${f3(s.bias)}</td></tr>`;
+    }).join("");
+
+    const t23 = fit.tier2_vs_tier3, three = fit.three_way;
+    const boot = b => b ? `bootstrap median ${b.median.toFixed(2)}, 80% range ${b.p10.toFixed(2)}–${b.p90.toFixed(2)}` : "";
+    const sampleTag = (x) => x.reliable
+        ? `<span style="color:#00ff87">${x.n_fixtures} fixtures</span>`
+        : `<span style="color:#f5a623">only ${x.n_fixtures} fixtures — indicative, not conclusive</span>`;
+
+    let html = `
+        <h2 style="font-size:16px;margin-top:20px">Tier accuracy vs league-average baseline</h2>
+        <p class="section-hint">Skill = how much lower the Poisson deviance is than just predicting the league-average goals for every team (over the same rows). Negative = worse than guessing the average.</p>
+        <div style="overflow-x:auto"><table class="players-table">
+            <thead><tr><th>Source</th><th>Team-matches</th><th>Deviance</th><th>Baseline dev.</th><th>Skill</th><th>MAE</th><th>Bias</th></tr></thead>
+            <tbody>${sumRows}</tbody></table></div>`;
+
+    if (t23.curve) {
+        html += `
+        <h2 style="font-size:16px;margin-top:20px">Best Tier 2 weight (rest Tier 3) — GW2+</h2>
+        <p class="section-hint">Best static Tier 2 weight: <b>${t23.best_w2.toFixed(2)}</b> (deviance ${t23.best_deviance.toFixed(3)} vs league-average ${f3(t23.league_avg_deviance)}, live model blend ${f3(t23.production_model_deviance)}). ${boot(t23.bootstrap)}. Sample: ${sampleTag(t23)}.</p>
+        <div class="sens-chart-card">${devianceCurve(t23.curve.filter((_, i) => i % 2 === 0), c => `T2 ${c.w2.toFixed(1)}`, c => c.deviance, c => c.w2 === t23.best_w2 || (t23.curve.filter((_, i) => i % 2 === 0).every(x => x.deviance >= c.deviance)))}</div>`;
+    }
+
+    if (three.top) {
+        const t = three.top[0];
+        html += `
+        <h2 style="font-size:16px;margin-top:20px">Tier 1 / 2 / 3 mix — GW${three.gameweeks.join(", ")} (odds archived)</h2>
+        <p class="section-hint">Best mix: <b>Tier 1 ${t.w1.toFixed(2)} / Tier 2 ${t.w2.toFixed(2)} / Tier 3 ${t.w3.toFixed(2)}</b> (deviance ${t.deviance.toFixed(3)}). Best <code>odds_weight</code> vs the live Tier 2/3 model: <b>${three.best_odds_weight.toFixed(2)}</b> — ${boot(three.bootstrap_odds_weight)}. Sample: ${sampleTag(three)}. The live default is 0.60.</p>
+        <div class="sens-chart-card">${devianceCurve(three.odds_weight_curve.filter((_, i) => i % 2 === 0), c => `odds ${c.odds_weight.toFixed(1)}`, c => c.deviance, c => Math.abs(c.odds_weight - three.best_odds_weight) < 0.051 && three.odds_weight_curve.filter((_, i) => i % 2 === 0).every(x => x.deviance >= c.deviance))}</div>`;
+    } else {
+        html += `<p class="section-hint" style="margin-top:16px">No gameweek has both odds and rolling-xG data yet, so the three-way fit isn't available.</p>`;
+    }
+    return html;
+}
+
 // ─── Prediction Accuracy: Team xG backtest ────────────────────────────────────
 
 async function runTeamXgBacktest() {
@@ -684,6 +748,7 @@ function renderTeamXgBacktest(data) {
         return `GW${gw}: Tier1=${t1}, Tier2=${t2}, Tier3=${t3} fixtures`;
     }).join(" · ");
     $("#team-xg-samples").textContent = `Sample sizes — ${countsStr}`;
+    $("#team-xg-weights").innerHTML = renderTierWeightFit(data.summary, data.weight_fit);
 
     const teamRow = r => `
         <tr>
