@@ -63,6 +63,12 @@ W_ATK_FACTOR  = 1.0   # scales goal/assist contribution for MID/FWD (and rare DE
 # still gets 1/3 the weight of a full 90-minute season of current-season xG data by
 # GW6-ish, fading out as more of this season accumulates. Tune via backtest.
 SHARE_SHRINKAGE_K = 6.0
+# Reliability of the last-season share prior: that prior is blended toward the position
+# average with weight w = past_n90 / (past_n90 + this), past_n90 = last season's minutes/90.
+# Without it a player with a tiny last-season sample gets an absurd share (e.g. 6 minutes and
+# 0.18 xG -> "200% of team xG"), which blew up a defender's predicted goals to ~1.5/match.
+# 6 matches the k above (a 9-minute cameo ~ 0 weight, a 2,700-minute season ~ 83%).
+SHARE_PRIOR_RELIABILITY_N90 = 6.0
 
 # Minutes-model shrinkage (fpl_client.compute_minutes_model): same Beta-Binomial
 # posterior-mean idea as SHARE_SHRINKAGE_K, applied to start rate / minutes rate /

@@ -21,6 +21,7 @@ from config import (
     MINUTES_SHRINKAGE_GAMES,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
+    SHARE_PRIOR_RELIABILITY_N90,
     SHARE_SHRINKAGE_K,
     TIER2_SHRINKAGE_GAMES,
 )
@@ -301,8 +302,13 @@ def compute_xg_share(
         if past_mins > 0:
             est_team_goals = LEAGUE_AVG_GOALS * (past_mins / 90)
             if est_team_goals > 0:
-                prior_goal = float(past.get("expected_goals") or 0) / est_team_goals
-                prior_assist = float(past.get("expected_assists") or 0) / est_team_goals
+                # Reliability-weight last season's share toward the position average so a
+                # few minutes of last-season data can't produce an absurd share.
+                past_n90 = past_mins / 90.0
+                rel = SHARE_PRIOR_RELIABILITY_N90
+                w = past_n90 / (past_n90 + rel) if rel > 0 else 1.0
+                prior_goal = w * (float(past.get("expected_goals") or 0) / est_team_goals) + (1 - w) * prior_goal
+                prior_assist = w * (float(past.get("expected_assists") or 0) / est_team_goals) + (1 - w) * prior_assist
 
     denom = n90 + k
     if denom <= 0:
