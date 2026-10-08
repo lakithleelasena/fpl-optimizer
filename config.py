@@ -66,8 +66,12 @@ SHARE_SHRINKAGE_K = 6.0
 
 # Minutes-model shrinkage (fpl_client.compute_minutes_model): same Beta-Binomial
 # posterior-mean idea as SHARE_SHRINKAGE_K, applied to start rate / minutes rate /
-# P(60+) / P(1-59) instead of goal share. k=6 games.
-MINUTES_SHRINKAGE_GAMES = 6.0
+# P(60+) / P(1-59) instead of goal share. k=1.5 games (was 6, which let last season's
+# start rate dominate until ~game 6 and under-predicted regulars' minutes). Backtest GW2-5
+# (all 1,668 player-gameweeks): Brier for P(60+) 0.182 at k=6 -> 0.152 at k=1.5 (0.145 at
+# k=1); player-points MAE 1.956 -> 1.911. Flat between k=1 and 2, so 1.5 is the cautious
+# pick. Role/minutes are far stickier than goal output, hence a much smaller k than above.
+MINUTES_SHRINKAGE_GAMES = 1.5
 
 # DefCon thresholds (single-match CBIT/CBIRT count needed for the flat 2-point award) —
 # verified against fantasy.premierleague.com/help/rules 2026-09-17. GKPs aren't eligible
