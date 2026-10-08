@@ -29,6 +29,7 @@ from config import (
     W_CS_FACTOR,
     W_FORM_FACTOR,
     W_ODDS_WEIGHT,
+    DEFCON_THRESHOLD,
 )
 import bonus_model
 from fpl_client import (
@@ -308,6 +309,112 @@ def compute_team_xg_backtest(
     }
 
 
+# ─── Component-level scoring ─────────────────────────────────────────────────
+# Predicted points split into FPL's scoring components, compared with the same split
+# of what the player actually scored. Actuals are rebuilt from per-match stats; "other"
+# catches anything we don't predict (red cards, own goals, missed penalties) plus any
+# rounding/rule mismatch, so the actual components always sum to total_points.
+
+COMPONENTS = ["appearance", "goals", "assists", "clean_sheet", "goals_conceded",
+              "saves", "bonus", "defcon", "cards", "form_adj", "other"]
+COMPONENT_LABELS = {
+    "appearance": "Appearance (1/2 pts)", "goals": "Goals", "assists": "Assists",
+    "clean_sheet": "Clean sheet", "goals_conceded": "Goals conceded (-1 per 2)",
+    "saves": "Saves + pen saves", "bonus": "Bonus", "defcon": "DefCon",
+    "cards": "Cards", "form_adj": "Form adjustment", "other": "Other / unmodelled",
+}
+
+
+def _actual_components(entry: dict, position: str) -> dict[str, float]:
+    mins = entry.get("minutes", 0) or 0
+    c = {k: 0.0 for k in COMPONENTS}
+    if mins <= 0:
+        c["other"] = float(entry.get("total_points", 0))  # e.g. a red card without playing — never happens, kept for safety
+        return c
+    c["appearance"] = 2.0 if mins >= 60 else 1.0
+    c["goals"] = float(entry.get("goals_scored", 0) * _PTS_PER_GOAL[position])
+    c["assists"] = float(entry.get("assists", 0) * 3)
+    c["clean_sheet"] = float(entry.get("clean_sheets", 0) * _CS_PTS[position])
+    if position in ("GKP", "DEF"):
+        c["goals_conceded"] = -float((entry.get("goals_conceded", 0) or 0) // 2)
+    if position == "GKP":
+        c["saves"] = float((entry.get("saves", 0) or 0) // 3 + 5 * (entry.get("penalties_saved", 0) or 0))
+    c["bonus"] = float(entry.get("bonus", 0) or 0)
+    thr = DEFCON_THRESHOLD.get(position)
+    if thr is not None and (entry.get("defensive_contribution", 0) or 0) >= thr:
+        c["defcon"] = 2.0
+    c["cards"] = -float((entry.get("yellow_cards", 0) or 0) + 3 * (entry.get("red_cards", 0) or 0))
+    c["other"] = float(entry.get("total_points", 0)) - sum(c.values())
+    return c
+
+
+def _component_summary(rows: list[dict]) -> dict:
+    """Per-component MAE/bias, overall and by position, in two views:
+      "played" — only rows where the player had minutes > 0 (what the user asked to see).
+         CAUTION: this conditions on an outcome the model is trying to predict. Predictions
+         include the chance the player doesn't play, so on this subset appearance, clean
+         sheets and everything scaled by exp_minutes look under-predicted by construction.
+      "all"    — every player-gameweek the model made a prediction for (incl. 0 minutes);
+         the unbiased view for judging calibration.
+    baseline_mae = MAE of predicting that component's mean for every row — a component
+    whose MAE is not below its baseline isn't adding information."""
+
+    def block(subset: list[dict]) -> dict:
+        n = len(subset)
+        out = {}
+        for comp in COMPONENTS:
+            if n == 0:
+                continue
+            preds = [r["pred_c"][comp] for r in subset]
+            acts = [r["act_c"][comp] for r in subset]
+            mean_act = sum(acts) / n
+            out[comp] = {
+                "label": COMPONENT_LABELS[comp],
+                "mean_predicted": round(sum(preds) / n, 3),
+                "mean_actual": round(mean_act, 3),
+                "bias": round(sum(p - a for p, a in zip(preds, acts)) / n, 3),
+                "mae": round(sum(abs(p - a) for p, a in zip(preds, acts)) / n, 3),
+                "baseline_mae": round(sum(abs(a - mean_act) for a in acts) / n, 3),
+            }
+        return {"n": n, "components": out}
+
+    def view(subset: list[dict]) -> dict:
+        return {
+            "ALL": block(subset),
+            **{pos: block([r for r in subset if r["position"] == pos]) for pos in ("GKP", "DEF", "MID", "FWD")},
+        }
+
+    return {"played": view([r for r in rows if r["minutes"] > 0]), "all": view(rows)}
+
+
+def _player_components(rows: list[dict]) -> list[dict]:
+    """One line per player who played in the window: totals of predicted vs actual
+    points by component over the gameweeks they played."""
+    by_player: dict[int, dict] = {}
+    for r in rows:
+        if r["minutes"] <= 0:
+            continue
+        p = by_player.setdefault(r["player_id"], {
+            "player_id": r["player_id"], "name": r["name"], "team": r["team"],
+            "position": r["position"], "games": 0, "minutes": 0,
+            "predicted": {k: 0.0 for k in COMPONENTS}, "actual": {k: 0.0 for k in COMPONENTS},
+        })
+        p["games"] += 1
+        p["minutes"] += r["minutes"]
+        for k in COMPONENTS:
+            p["predicted"][k] += r["pred_c"][k]
+            p["actual"][k] += r["act_c"][k]
+    out = []
+    for p in by_player.values():
+        p["predicted"] = {k: round(v, 2) for k, v in p["predicted"].items()}
+        p["actual"] = {k: round(v, 2) for k, v in p["actual"].items()}
+        p["predicted_total"] = round(sum(p["predicted"].values()), 2)
+        p["actual_total"] = round(sum(p["actual"].values()), 2)
+        out.append(p)
+    out.sort(key=lambda p: -p["actual_total"])
+    return out
+
+
 # ─── Stage 2: Player points accuracy ─────────────────────────────────────────
 
 def _team_games_before(fixtures: list[dict], team_id: int, target_gw: int) -> int:
@@ -482,6 +589,19 @@ def compute_player_points_backtest(
             predicted = round(max(0.0, predicted), 2)
             actual = entry["total_points"]
 
+            pred_c = {
+                "appearance": appearance_pts,
+                "goals": exp_minutes * goal_pts,
+                "assists": exp_minutes * asst_pts,
+                "clean_sheet": cs_term,
+                "goals_conceded": exp_minutes * xgc_pts,
+                "saves": exp_minutes * (save_pts + pen_save_pts),
+                "bonus": exp_minutes * bonus_pts,
+                "defcon": exp_minutes * defcon_pts,
+                "cards": exp_minutes * card_pts,
+                "form_adj": form_adj,
+                "other": 0.0,
+            }
             rows.append({
                 "gw": target_gw, "player_id": player_id, "name": meta["name"],
                 "team": meta["team"], "position": position,
@@ -489,6 +609,9 @@ def compute_player_points_backtest(
                 "error": round(predicted - actual, 2),
                 "started": entry["minutes"] >= 60,
                 "minutes": entry["minutes"],
+                "p_60_plus": round(p_60_plus, 3), "exp_minutes": round(exp_minutes, 3),
+                "pred_c": {k: round(v, 3) for k, v in pred_c.items()},
+                "act_c": {k: round(v, 3) for k, v in _actual_components(entry, position).items()},
             })
 
     gws = sorted({r["gw"] for r in rows})
@@ -513,5 +636,7 @@ def compute_player_points_backtest(
         "starters_only_mae": starters_mae,
         "total_predictions": len(rows),
         "skipped_no_prior_data": skipped_no_prior,
+        "component_summary": _component_summary(rows),
+        "player_components": _player_components(rows),
         "rows": rows,
     }

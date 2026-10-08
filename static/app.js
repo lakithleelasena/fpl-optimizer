@@ -798,6 +798,100 @@ async function runPlayerPointsBacktest() {
     }
 }
 
+// ─── Prediction Accuracy: per-component breakdown ───────────────────────────
+
+const _ppComp = { data: null, view: "played", pos: "ALL", query: "", sort: "actual_total", dir: -1 };
+const _COMP_KEYS = ["appearance", "goals", "assists", "clean_sheet", "goals_conceded", "saves", "bonus", "defcon", "cards", "other"];
+
+function renderPlayerComponents(data) {
+    _ppComp.data = data;
+    drawPlayerComponents();
+}
+
+function drawPlayerComponents() {
+    const { data, view, pos, query, sort, dir } = _ppComp;
+    const summary = data.component_summary[view][pos];
+    const f = (v, d = 2) => (v > 0 ? "+" : "") + v.toFixed(d);
+
+    const btn = (group, val, label) =>
+        `<button class="filter-btn${_ppComp[group] === val ? " active" : ""}" data-pp-${group}="${val}">${label}</button>`;
+    const controls = `
+        <div style="margin:6px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            ${btn("view", "played", "Players who played (mins > 0)")}${btn("view", "all", "All predictions (incl. 0 mins)")}
+            <span style="width:12px"></span>
+            ${["ALL", "GKP", "DEF", "MID", "FWD"].map(p => btn("pos", p, p)).join("")}
+        </div>`;
+
+    const rows = _COMP_KEYS.map(k => summary.components[k]).filter(c => c && (c.mean_predicted || c.mean_actual))
+        .map(c => {
+            const beats = c.mae < c.baseline_mae;
+            return `<tr><td>${c.label}</td><td>${c.mean_predicted.toFixed(3)}</td><td>${c.mean_actual.toFixed(3)}</td>
+                <td style="color:${Math.abs(c.bias) < 0.05 ? "#8b949e" : c.bias < 0 ? "#ff6b6b" : "#f5a623"};font-weight:600">${f(c.bias, 3)}</td>
+                <td style="font-weight:700">${c.mae.toFixed(3)}</td><td style="color:#8b949e">${c.baseline_mae.toFixed(3)}</td>
+                <td style="color:${beats ? "#00ff87" : "#ff6b6b"}">${beats ? "better" : "no better"}</td></tr>`;
+        }).join("");
+
+    const caveat = view === "played"
+        ? `<b>Heads-up:</b> filtering to players who played selects on an outcome the model is predicting — its predictions include the chance a player doesn't play, so appearance, clean-sheet and every minutes-scaled component look under-predicted here by construction. Use "All predictions" to judge calibration.`
+        : `Every player-gameweek the model made a prediction for, including those who didn't play — the fair view for calibration.`;
+
+    // Per-player table
+    let players = data.player_components.filter(p =>
+        (pos === "ALL" || p.position === pos) && (!query || p.name.toLowerCase().includes(query.toLowerCase())));
+    const val = p => sort === "name" ? p.name : sort === "error" ? p.predicted_total - p.actual_total
+        : sort === "predicted_total" ? p.predicted_total : sort === "games" ? p.games : p.actual_total;
+    players = players.sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0) * dir);
+    const shown = players.slice(0, 100);
+    const cell = (p, k) => {
+        const pr = p.predicted[k], ac = p.actual[k];
+        if (!pr && !ac) return `<td style="color:#484f58">–</td>`;
+        const d = pr - ac;
+        return `<td title="predicted ${pr.toFixed(2)} vs actual ${ac.toFixed(2)}">${pr.toFixed(1)} / <b>${ac.toFixed(1)}</b></td>`;
+    };
+    const th = (key, label) => `<th data-pp-sort="${key}" style="cursor:pointer">${label}${sort === key ? (dir < 0 ? " ▼" : " ▲") : ""}</th>`;
+    const playerTable = `
+        <h2 style="font-size:16px;margin-top:24px">Per-player: predicted vs actual by component
+            <small style="font-weight:400;color:#8b949e">(season total over the GWs each played, predicted / <b>actual</b>)</small></h2>
+        <input id="pp-player-search" type="search" placeholder="Search player…" value="${query.replace(/"/g, "&quot;")}"
+               style="margin:4px 0 8px;padding:6px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;width:220px">
+        <span class="section-hint" style="margin-left:8px">${players.length} players${players.length > shown.length ? ` — showing top ${shown.length}` : ""}; click a header to sort</span>
+        <div style="overflow-x:auto"><table class="players-table">
+            <thead><tr>${th("name", "Player")}<th>Team</th><th>Pos</th>${th("games", "GP")}<th>Mins</th>
+                ${th("predicted_total", "Pred")}${th("actual_total", "Actual")}${th("error", "Err")}
+                ${_COMP_KEYS.map(k => `<th>${({appearance:"App",goals:"Goals",assists:"Ast",clean_sheet:"CS",goals_conceded:"GC",saves:"Saves",bonus:"Bonus",defcon:"DefCon",cards:"Cards",other:"Other"})[k]}</th>`).join("")}</tr></thead>
+            <tbody>${shown.map(p => {
+                const err = p.predicted_total - p.actual_total;
+                return `<tr><td>${p.name}</td><td>${p.team}</td><td>${p.position}</td><td>${p.games}</td><td>${p.minutes}</td>
+                    <td>${p.predicted_total.toFixed(1)}</td><td style="color:#00ff87;font-weight:700">${p.actual_total.toFixed(1)}</td>
+                    <td style="color:${err < 0 ? "#ff6b6b" : "#f5a623"};font-weight:600">${f(err, 1)}</td>
+                    ${_COMP_KEYS.map(k => cell(p, k)).join("")}</tr>`;
+            }).join("")}</tbody></table></div>`;
+
+    $("#pp-components").innerHTML = `
+        <h2 style="font-size:16px;margin-top:20px">Points by component — predicted vs actual
+            <small style="font-weight:400;color:#8b949e">(per player-gameweek, n=${summary.n}; bias = predicted − actual)</small></h2>
+        ${controls}
+        <p class="section-hint">${caveat} "Baseline" is the MAE of guessing each component's own average for every row (hindsight, so a stiff test) — "better" means the model beats it. Form adjustment is zero for GW1–5 by construction (needs more than 4 prior games).</p>
+        <div style="overflow-x:auto"><table class="players-table">
+            <thead><tr><th>Component</th><th>Mean predicted</th><th>Mean actual</th><th>Bias</th><th>MAE</th><th>Baseline MAE</th><th>vs baseline</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>
+        ${playerTable}`;
+
+    const root = $("#pp-components");
+    root.querySelectorAll("[data-pp-view]").forEach(b => b.onclick = () => { _ppComp.view = b.dataset.ppView; drawPlayerComponents(); });
+    root.querySelectorAll("[data-pp-pos]").forEach(b => b.onclick = () => { _ppComp.pos = b.dataset.ppPos; drawPlayerComponents(); });
+    root.querySelectorAll("[data-pp-sort]").forEach(h => h.onclick = () => {
+        const k = h.dataset.ppSort;
+        _ppComp.dir = _ppComp.sort === k ? -_ppComp.dir : (k === "name" ? 1 : -1);
+        _ppComp.sort = k; drawPlayerComponents();
+    });
+    const search = $("#pp-player-search");
+    search.oninput = () => {
+        _ppComp.query = search.value; const pos = search.selectionStart; drawPlayerComponents();
+        const again = $("#pp-player-search"); again.focus(); again.setSelectionRange(pos, pos);
+    };
+}
+
 function renderPlayerPointsBacktest(data) {
     $("#pp-overall-mae").textContent = data.overall_mae.toFixed(3);
     $("#pp-starters-mae").textContent = data.starters_only_mae.toFixed(3);
@@ -815,6 +909,8 @@ function renderPlayerPointsBacktest(data) {
         })),
         data.gameweeks
     );
+
+    renderPlayerComponents(data);
 
     const playerRow = r => `
         <tr>

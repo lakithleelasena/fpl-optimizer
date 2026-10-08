@@ -821,6 +821,13 @@ async def fetch_all_data() -> dict:
                     "yellow_cards": h.get("yellow_cards", 0),
                     "defensive_contribution": h.get("defensive_contribution", 0),
                     "bonus": h.get("bonus", 0),
+                    # Extra scoring events — only used by the component-level backtest
+                    # (backtest_accuracy) to rebuild each player's actual points by component.
+                    "goals_conceded": h.get("goals_conceded", 0),
+                    "red_cards": h.get("red_cards", 0),
+                    "own_goals": h.get("own_goals", 0),
+                    "penalties_saved": h.get("penalties_saved", 0),
+                    "penalties_missed": h.get("penalties_missed", 0),
                     "team_id": team_lookup.get(player_id),
                 }
                 for h in history
