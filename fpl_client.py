@@ -909,7 +909,11 @@ async def fetch_all_data() -> dict:
 
         # ── Odds API match xG (Tier 1) ───────────────────────────────────────
         upcoming_fix_list = [f for f in fixtures if f.get("event") in upcoming_gws]
-        odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw)
+        # cache_only: a normal fetch must never spend Odds API quota — it used to call the API on
+        # the first load of each new gameweek (cache keyed by GW). Only the explicit Refresh Odds
+        # button (main.refresh_odds) pulls live odds; with no odds for THIS gameweek the model
+        # runs on Tier 2/3 alone and the odds columns stay blank.
+        odds_xg = await fetch_odds_xg(teams, upcoming_fix_list, current_gw=next_gw, cache_only=True)
 
         # ── Per-GW match xG for each team ────────────────────────────────────
         # Tier 3 anchors on the live league-average goals per team and the fixture

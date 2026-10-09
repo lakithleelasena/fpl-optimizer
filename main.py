@@ -521,11 +521,16 @@ async def get_teams():
             next_gw_team_odds[a_id] = {"team_xg": vals[0], "opp_xg": vals[1]}
 
     odds_meta = get_odds_cache_meta()
+    # Odds are only valid for the gameweek they were pulled for — if the cache is last
+    # gameweek's, report "none yet for this gameweek" (blank), not last gameweek's odds.
+    odds_current = bool(odds_meta) and odds_meta["gameweek"] == next_gw
     odds_status = {
         "has_key": bool(ODDS_API_KEY),
-        "gameweek": odds_meta["gameweek"] if odds_meta else None,
-        "fetched_at": odds_meta["fetched_at"] if odds_meta else None,
-        "fixture_count": odds_meta["fixture_count"] if odds_meta else 0,
+        "gameweek": odds_meta["gameweek"] if odds_current else None,
+        "fetched_at": odds_meta["fetched_at"] if odds_current else None,
+        "fixture_count": odds_meta["fixture_count"] if odds_current else 0,
+        "next_gw": next_gw,
+        "last_cached_gameweek": odds_meta["gameweek"] if odds_meta and not odds_current else None,
     }
 
     result = []

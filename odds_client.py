@@ -234,16 +234,23 @@ async def fetch_odds_xg(
     upcoming_fixtures: list[dict],
     current_gw: int | None = None,
     force_refresh: bool = False,
+    cache_only: bool = False,
 ) -> dict[int, dict[int, tuple[float, float]]]:
     """
     Return {fixture_id: {team_id: (team_xg, opp_xg)}} for upcoming fixtures.
 
     Uses file cache when current_gw is supplied and cache is valid for that GW.
     Pass force_refresh=True to bypass the cache and fetch fresh data.
+    Pass cache_only=True to NEVER call the Odds API (the free tier is only a few calls per
+    gameweek): returns the cache for current_gw, or {} if there is none for THAT gameweek —
+    never a previous gameweek's odds. Only the explicit Refresh Odds action spends quota.
     Returns {} if ODDS_API_KEY is absent or the request fails.
     """
     if not ODDS_API_KEY:
         return {}
+
+    if cache_only:
+        return load_odds_cache(current_gw) if current_gw else {}
 
     # Serve from cache unless caller requested a refresh
     if current_gw and not force_refresh:

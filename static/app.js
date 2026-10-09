@@ -1007,7 +1007,9 @@ function renderOddsStatus(oddsStatus) {
         const fmt = dt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
         el.innerHTML = `<span style="color:#00ff87">Odds API: GW${oddsStatus.gameweek} · ${oddsStatus.fixture_count} fixtures · updated ${fmt} UTC</span>`;
     } else {
-        el.innerHTML = `<span style="color:#f5a623">Odds API: key configured — no cache yet, click Refresh</span>`;
+        const gw = oddsStatus.next_gw ? `GW${oddsStatus.next_gw}` : "this gameweek";
+        const last = oddsStatus.last_cached_gameweek ? ` (last pull was GW${oddsStatus.last_cached_gameweek}, not used)` : "";
+        el.innerHTML = `<span style="color:#f5a623">Odds API: no odds for ${gw} yet${last} — predictions use the model only. Click Refresh Odds to pull (uses API quota).</span>`;
     }
 }
 
