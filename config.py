@@ -102,6 +102,18 @@ DEFCON_SHRINKAGE_GAMES = 4.0
 DEFCON_PRIOR_PSEUDO_GAMES = 20.0
 DEFCON_PRIOR_FALLBACK: dict[str, float] = {"GKP": 0.0, "DEF": 0.25, "MID": 0.12, "FWD": 0.0}
 
+# Card rate (fpl_client.compute_card_rate): expected card points per 90 minutes = a player's yellows
+# per 90, shrunk toward the position's league yellow rate with weight CARD_SHRINKAGE_N90 90-minute
+# periods, plus the league red-card rate x 3 (reds are too rare to say anything per player). Over a
+# handful of games a player-specific yellow rate is mostly noise (backtest GW2-5: MSE 0.140 for the
+# old per-appearance rate, 0.117 shrunk, 0.116 pure league average), and per-90 scales with
+# exp_minutes properly. League rates are shrunk toward the fallbacks below (this season's GW1-5
+# league rates) by CARD_PRIOR_PSEUDO_N90 pseudo-periods early on.
+CARD_SHRINKAGE_N90 = 8.0
+CARD_PRIOR_PSEUDO_N90 = 100.0
+CARD_YELLOW_FALLBACK_PER90: dict[str, float] = {"GKP": 0.03, "DEF": 0.17, "MID": 0.19, "FWD": 0.23}
+CARD_RED_FALLBACK_PER90 = 0.0055
+
 # Penalty saves (Phase 5, PREDICTION_MODEL_PLAN.md): a small flat GKP-only term,
 # not fixture-specific — we don't have team-level penalty-award data (see Phase
 # 4's scoped-out penalty split), so this uses commonly-cited league-wide rates

@@ -10,6 +10,10 @@ from config import (
     AWAY_ADV_MULT,
     BOOTSTRAP_URL,
     CACHE_TTL_SECONDS,
+    CARD_PRIOR_PSEUDO_N90,
+    CARD_RED_FALLBACK_PER90,
+    CARD_SHRINKAGE_N90,
+    CARD_YELLOW_FALLBACK_PER90,
     DEFCON_PRIOR_FALLBACK,
     DEFCON_PRIOR_PSEUDO_GAMES,
     DEFCON_SHRINKAGE_GAMES,
@@ -387,15 +391,51 @@ def compute_defcon_hit_rate(
     return round((hits + k * prior_rate) / (len(full) + k), 4)
 
 
-def compute_card_rate(history: list[dict], window: int = 6) -> float:
-    """P(yellow card this match), from the last `window` played games — used as a
-    small per-match points deduction. Red cards are rare enough, and already
-    dominate the match outcome so heavily via lost minutes, to skip for this v1."""
+def build_card_priors(entries: list[tuple[str, list[dict]]]) -> dict[str, tuple[float, float]]:
+    """
+    League (yellow cards per 90, red cards per 90) by position — the shrinkage prior for
+    compute_card_rate. Yellow rates are per position; the red rate is pooled over every
+    position (reds are too rare to split). Both are pulled toward the config fallbacks by
+    CARD_PRIOR_PSEUDO_N90 pseudo 90-minute periods so the first gameweeks can't produce a
+    wild rate. `entries`: (position, history) pairs (backtest passes truncated histories).
+    """
+    yellows: dict[str, float] = defaultdict(float)
+    n90: dict[str, float] = defaultdict(float)
+    reds = 0.0
+    for pos, history in entries:
+        for h in history:
+            if h.get("minutes", 0) > 0:
+                yellows[pos] += h.get("yellow_cards", 0)
+                reds += h.get("red_cards", 0)
+                n90[pos] += h["minutes"] / 90.0
+    total_n90 = sum(n90.values())
+    red90 = (reds + CARD_PRIOR_PSEUDO_N90 * 5 * CARD_RED_FALLBACK_PER90) / (total_n90 + CARD_PRIOR_PSEUDO_N90 * 5)
+    return {
+        pos: (
+            (yellows[pos] + CARD_PRIOR_PSEUDO_N90 * fb) / (n90[pos] + CARD_PRIOR_PSEUDO_N90),
+            red90,
+        )
+        for pos, fb in CARD_YELLOW_FALLBACK_PER90.items()
+    }
+
+
+def compute_card_rate(
+    history: list[dict], prior: tuple[float, float] = (0.0, 0.0), k: float = CARD_SHRINKAGE_N90,
+) -> float:
+    """
+    Expected card points deducted per 90 minutes played (a positive number; the predictor
+    subtracts it and scales by exp_minutes): the player's yellows per 90 shrunk toward the
+    position's league yellow rate, plus 3 x the league red rate:
+        yellow90 = (yellows + k*prior_yellow90) / (n90 + k)
+    `prior` = (league yellow/90, league red/90) from build_card_priors. Per-90 (not per
+    appearance) so a cameo and a full match are scaled consistently by exp_minutes.
+    """
+    prior_yellow90, prior_red90 = prior
     played = [h for h in history if h.get("minutes", 0) > 0]
-    recent = played[-window:]
-    if not recent:
-        return 0.0
-    return round(sum(1 for h in recent if h.get("yellow_cards", 0) >= 1) / len(recent), 4)
+    n90 = sum(h["minutes"] for h in played) / 90.0
+    yellows = sum(h.get("yellow_cards", 0) for h in played)
+    yellow90 = (yellows + k * prior_yellow90) / (n90 + k)
+    return round(yellow90 + 3 * prior_red90, 4)
 
 
 def compute_saves_rate(
@@ -826,6 +866,9 @@ async def fetch_all_data() -> dict:
         defcon_priors = build_defcon_priors(
             [(pos_lookup.get(pid, "MID"), history) for pid, history, _ in results]
         )
+        card_priors = build_card_priors(
+            [(pos_lookup.get(pid, "MID"), history) for pid, history, _ in results]
+        )
         minutes_priors = build_minutes_priors(
             [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
         )
@@ -850,7 +893,7 @@ async def fetch_all_data() -> dict:
             player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(
                 history, position, defcon_priors.get(position, 0.0),
             )
-            player_stats[player_id]["card_rate"] = compute_card_rate(history)
+            player_stats[player_id]["card_rate"] = compute_card_rate(history, card_priors.get(position, (0.0, 0.0)))
             # Opponent-adjusted save rate (Phase 5) — multiplied by this week's
             # match_opp_xg at prediction time, same pattern as goal/assist shares.
             player_stats[player_id]["saves_per_opp_xg"] = compute_saves_rate(history, team_xg_by_fixture)

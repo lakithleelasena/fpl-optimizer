@@ -33,6 +33,7 @@ from config import (
 )
 import bonus_model
 from fpl_client import (
+    build_card_priors,
     build_defcon_priors,
     build_minutes_priors,
     build_position_priors,
@@ -499,6 +500,14 @@ def compute_player_points_backtest(
         for gw in all_target_gws
     }
 
+    card_priors_by_gw = {
+        gw: build_card_priors([
+            (player_meta[pid]["position"], [h for h in hist if h["round"] < gw])
+            for pid, hist in raw_histories.items() if pid in player_meta
+        ])
+        for gw in all_target_gws
+    }
+
     rows: list[dict] = []
     skipped_no_prior = 0
 
@@ -565,7 +574,7 @@ def compute_player_points_backtest(
             defcon_hit_rate = compute_defcon_hit_rate(
                 prior, position, defcon_priors_by_gw[target_gw].get(position, 0.0),
             )
-            card_rate = compute_card_rate(prior)
+            card_rate = compute_card_rate(prior, card_priors_by_gw[target_gw].get(position, (0.0, 0.0)))
 
             cs_pts = _CS_PTS[position]
             cs_prob = math.exp(-match_opp_xg)
