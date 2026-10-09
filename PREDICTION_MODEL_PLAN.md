@@ -486,3 +486,50 @@ Combined: player-points MAE 1.992 → 1.909 (starters 2.449 → 2.396), P(60+) B
   player-gameweeks) is where the prior matters most and is only partly covered by the backtest.
 - Re-run this whole table after GW10: all conclusions above rest on 4 target gameweeks,
   in-sample, with one or two tuned constants each.
+
+---
+
+## Follow-up: minutes recency, DefCon, cards (2026-10-08, after GW5)
+
+Planned from read-only backtests of the component gaps above; implemented as one commit each.
+The comparison metric is MSE of player points (rewards predictions that are right on average,
+which is what the squad optimizer needs) plus the component's own bias — MAE alone favours
+under-predicting rare events, so it can rise when a prediction gets better (e.g. DefCon).
+RMSE and average bias were added to the player-points summary on the Accuracy tab.
+
+| Step | Change | Before → after (GW2-5, 1,467 player-gameweeks) |
+|---|---|---|
+| Minutes | Recency-weight this season's games (decay 0.5; game `a` ago counts 0.5^a) and shrink toward the last-season/position prior with n_eff-based weight k = 0.75 (was a flat average, k = 1.5) | MSE 7.740 → 7.506; P(60+) Brier 0.1513 → 0.1342; appearance bias −0.044 → +0.002, MAE 0.549 → 0.478 |
+| DefCon | P(threshold \| plays 60+) shrunk to the position's league rate (k = 4 games), points = 2 × rate × P(60+) outside the exp_minutes bundle | MSE 7.506 → 7.382; defcon bias −0.029 → −0.009 |
+| Cards | Yellows per 90 shrunk to the position's league yellow rate (k = 8 × 90 min) + 3 × pooled league red rate, scaled by exp_minutes | MSE 7.382 → 7.347; cards bias +0.035 → +0.003 |
+
+Overall MAE 1.909 → 1.860, starters-only 2.396 → 2.361, MSE 7.740 → 7.347, RMSE 2.782 → 2.711.
+
+**Why these.** The existing minutes model treated every game this season equally, but role changes
+come in steps (a "went 60+ last game" feature alone took the out-of-sample Brier from 0.147 to
+0.128). Raw per-player DefCon and card rates over ~4 games were noisier than the position average;
+DefCon was also diluted by cameo appearances and then scaled by minutes a second time.
+
+**Validation.** Minutes parameters were scanned on a (decay, k) grid; leave-one-gameweek-out picks
+decay 0.3 / k 0.5-0.75 for every held-out week (CV MSE 7.494), and the result is flat for decay
+0.3-0.5, so the less extreme 0.5 / 0.75 is used. League priors (DefCon, cards) are built per target
+gameweek from strictly earlier games in the backtest, so nothing leaks. All of this rests on four
+target gameweeks with 2-3 tuned numbers per change — re-check around GW10.
+
+**Not done, with reasons.**
+- *Assists:* every variant (global scale, consistent prior basis, assists-per-goal ratio) left the
+  assist Poisson deviance flat (0.341-0.343); the forward gap is 12 actual assists vs 4.4 xA, i.e.
+  mostly luck. There is a real structural inconsistency worth fixing eventually — the last-season
+  prior share is measured against team goals (est. 1.35 × games) while this season's share is
+  against team xA, and FPL xA sums to only ~0.61 of xG while actual assists run ~0.9 per goal — but
+  it brings bias to zero without improving accuracy, so it is parked.
+- *Saves:* shrinking the goalkeeper rate to the league rate gave MSE −0.01 on 87 goalkeeper rows,
+  and the league rate under-predicts total saves (2.76 vs 2.93 per match; xG undercounts shots
+  faced). Skipped as too weak to justify a change.
+- *Clean sheets:* the recency change leaves the −0.08 bias unchanged, so it is not a minutes issue
+  and the earlier "mostly noise at 100 team-matches" reading stands (revisit ~GW12-15).
+
+**Still open.** Bonus for MID/FWD (no better than the mean), goalkeeper saves (needs shots-faced data,
+not xG), FWD assist share, penalty/set-piece takers (`penalties_order` etc. in the bootstrap data;
+current-only, so forward-test only), archiving our predictions and FPL's `ep_next` each gameweek for
+a true out-of-sample benchmark, and ranking metrics (top-N overlap, captain pick, predicted-best XI).
