@@ -633,6 +633,10 @@ def compute_player_points_backtest(
         "share_window": share_window,
         "mae_by_position_per_gw": mae_by_position_per_gw,
         "overall_mae": overall_mae,
+        # RMSE / bias reward predictions that are right on average (what the squad optimizer
+        # needs); MAE alone favours under-predicting rare events, so read it alongside these.
+        "overall_rmse": round(math.sqrt(sum(r["error"] ** 2 for r in rows) / len(rows)), 3) if rows else 0.0,
+        "overall_bias": round(sum(r["error"] for r in rows) / len(rows), 3) if rows else 0.0,
         "starters_only_mae": starters_mae,
         "total_predictions": len(rows),
         "skipped_no_prior_data": skipped_no_prior,

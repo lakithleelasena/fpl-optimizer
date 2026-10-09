@@ -871,7 +871,7 @@ function drawPlayerComponents() {
         <h2 style="font-size:16px;margin-top:20px">Points by component — predicted vs actual
             <small style="font-weight:400;color:#8b949e">(per player-gameweek, n=${summary.n}; bias = predicted − actual)</small></h2>
         ${controls}
-        <p class="section-hint">${caveat} "Baseline" is the MAE of guessing each component's own average for every row (hindsight, so a stiff test) — "better" means the model beats it. Form adjustment is zero for GW1–5 by construction (needs more than 4 prior games).</p>
+        <p class="section-hint">${caveat} "Baseline" is the MAE of guessing each component's own average for every row (hindsight, so a stiff test) — "better" means the model beats it. For rare components (DefCon, cards, goals) MAE can rise even when the prediction gets more accurate on average, so read it together with Bias. Form adjustment is zero for GW1–5 by construction (needs more than 4 prior games).</p>
         <div style="overflow-x:auto"><table class="players-table">
             <thead><tr><th>Component</th><th>Mean predicted</th><th>Mean actual</th><th>Bias</th><th>MAE</th><th>Baseline MAE</th><th>vs baseline</th></tr></thead>
             <tbody>${rows}</tbody></table></div>
@@ -895,6 +895,8 @@ function drawPlayerComponents() {
 function renderPlayerPointsBacktest(data) {
     $("#pp-overall-mae").textContent = data.overall_mae.toFixed(3);
     $("#pp-starters-mae").textContent = data.starters_only_mae.toFixed(3);
+    $("#pp-overall-rmse").textContent = data.overall_rmse.toFixed(3);
+    $("#pp-overall-bias").textContent = (data.overall_bias > 0 ? "+" : "") + data.overall_bias.toFixed(3);
     $("#pp-predictions").textContent = data.total_predictions.toLocaleString();
     $("#pp-skipped").textContent = data.skipped_no_prior_data.toLocaleString();
 
