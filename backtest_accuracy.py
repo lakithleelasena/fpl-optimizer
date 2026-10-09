@@ -58,6 +58,7 @@ from predictor import (
     goalkeeper_penalty_save_pts,
 )
 from set_piece_history import load_set_piece_history
+from snapshot import list_snapshots
 from team_xg_model import expected_floor_div_poisson
 
 FORM_WINDOW = 4  # games used to approximate FPL's own "form" stat (see note in compute_player_points_backtest)
@@ -519,6 +520,17 @@ def compute_player_points_backtest(
     # gameweek, the chain of who is likely on the pitch to take it (needs every listed
     # teammate's expected minutes, including those with no appearances yet, so a pre-pass).
     archived_orders = load_set_piece_history()
+    archived_snapshots = list_snapshots()
+
+    def availability_at(pid: int, gw: int) -> float:
+        """FPL's chance-of-playing flag as it stood before this gameweek's deadline, from the
+        snapshot archive — 1.0 for gameweeks we never archived (the flag is live-only), which
+        is why backtests of earlier gameweeks can't see past injury doubts."""
+        snap = archived_snapshots.get(gw)
+        if not snap:
+            return 1.0
+        chance = snap["players"].get(str(pid), {}).get("availability", {}).get("chance_next_round")
+        return chance / 100.0 if chance is not None else 1.0
 
     def pen_order_at(pid: int, gw: int) -> int | None:
         if gw in archived_orders:
@@ -540,7 +552,7 @@ def compute_player_points_backtest(
             if games_before <= 0:
                 continue
             _, exp_min, _, _ = compute_minutes_model(
-                hist_sorted[:i], player_history_past.get(pid), games_before, 1.0,
+                hist_sorted[:i], player_history_past.get(pid), games_before, availability_at(pid, gw),
                 minutes_priors.get(pmeta["position"], (0.0, 0.0)),
             )
             team_takers[(pmeta["team_id"], gw)].append((pid, order, exp_min))
@@ -572,15 +584,14 @@ def compute_player_points_backtest(
                 continue
 
             # Minutes model (Phase 3) — same Beta-prior-blended P(60+)/P(1-59) split
-            # as the live pipeline. NOTE (approximation): historical
-            # chance_of_playing isn't retrievable (same limitation as "form" below),
-            # so availability is fixed at 1.0 here — the backtest can't reproduce a
-            # past injury doubt, only the live app's current-moment view of one.
+            # as the live pipeline. NOTE (approximation): chance_of_playing is live-only, so
+            # availability comes from the snapshot archive for gameweeks we archived and is
+            # 1.0 (no injury doubt) for earlier ones — see availability_at.
             team_games_before = _team_games_before(fixtures, team_id, target_gw)
             if team_games_before <= 0:
                 continue
             exp_start_pct, exp_minutes, p_60_plus, p_1_to_59 = compute_minutes_model(
-                prior, history_past, team_games_before, 1.0, minutes_prior,
+                prior, history_past, team_games_before, availability_at(player_id, target_gw), minutes_prior,
             )
 
             # xG-based share, shrunk toward last-season-at-club (or position-average)
