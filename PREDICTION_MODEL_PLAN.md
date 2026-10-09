@@ -581,3 +581,47 @@ backtest score. Live: Fernandes 6.47 → 6.78, Saka 5.98 → 6.23, Haaland 5.96 
   #1 takers' goal residuals after GW10 and check Σ(team players' expected goals) vs team xG.
 - Last season's share prior (`history_past`) still includes that season's penalties for former takers — not stripped.
 - Taker-specific conversion rates are tiny samples (Haaland 57% cited), so the league rate is used for everyone.
+
+---
+
+## Snapshot archive and live accuracy (2026-10-08, GW6 next)
+
+**Why.** Several inputs exist only "right now" in the FPL API — injury/availability flags, set-piece taker
+orders, prices and ownership, FPL's own `ep_next` — and so does the prediction the app would have made.
+Archiving them each gameweek gives leak-free backtests (availability, taker orders) and a true out-of-sample
+"live accuracy" test (our archived predictions vs real points vs FPL's `ep_next`). Archiving began at GW6, so
+nothing earlier can be recovered.
+
+**What is saved** (`snapshot.py`; one gzipped file per gameweek, `archive/<season>/gwNN.json.gz`, ~30 KB):
+every player's availability (status, news, chance of playing this/next round), set-piece orders (pen / free kick /
+corner), price and ownership, FPL's `ep_next`/`ep_this`/form; our default-parameter predictions for each upcoming
+gameweek with `exp_minutes`, P(60+), penalty share and blended match xG; the upcoming fixtures; and provenance
+(git commit + dirty flag, odds weight, whether odds exist for THIS gameweek and when they were pulled).
+
+**Rules.**
+- Keyed by the UPCOMING gameweek (the one FPL marks as next). Every save replaces that gameweek's file, so the last
+  one before the deadline wins; once the deadline passes, saves go to the next gameweek's file and the earlier one is
+  never touched again.
+- Saved automatically on every fresh FPL fetch and by the **Save snapshot now** button (forces a fresh fetch).
+  Manual by design — no scheduled job (no LaunchAgent, no GitHub Action). The header bar shows the deadline in the
+  browser's time zone with a countdown, the last save, how many times it was replaced, and turns amber when the deadline
+  is within 6 hours and the last save is over an hour old. Snapshot files are deliberately left uncommitted.
+- **Odds API quota:** only the Refresh Odds button pulls live odds. A normal fetch, the snapshot button and the snapshot
+  job use the cache only (`fetch_odds_xg(cache_only=True)`); previously the first load of each new gameweek called the API
+  by itself (cache keyed by gameweek). With no odds for the current gameweek the model runs on Tier 2/3 alone, odds columns
+  are blank (never last gameweek's), the Team Overview status says "no odds for GWn yet", and the snapshot records
+  `odds.present = false`. Verified with the API patched to fail and a previous-gameweek cache: zero calls.
+
+**Uses.**
+- Backtest: `availability_at(pid, gw)` feeds the archived chance-of-playing into the minutes model (and the penalty-taker
+  chain) for archived gameweeks, 1.0 otherwise; set-piece orders read the archive too.
+- Live accuracy (`live_accuracy.py`, `/api/backtest/live-accuracy`, Accuracy tab): once all of an archived gameweek's
+  fixtures finish, our archived predicted points and FPL's `ep_next` are scored on the same players (selected on predictions
+  only) — MAE, RMSE, bias, Spearman rank correlation, top-10/20 hits, highest-predicted ("captain") player's points.
+
+**To do / watch.**
+- Re-run **Save snapshot now** shortly before each deadline (after the Friday injury news); press Refresh Odds first if
+  you want odds in it (uses quota — a normal run never does).
+- After GW6 finishes, the first live-accuracy row appears; read it as a single noisy gameweek until ~5+ are archived.
+- Candidates once snapshots accumulate: use archived market data (price/ownership) as features, and test the
+  corner/free-kick order effects with leak-free orders (assists residual for corner #2-3 takers was +0.064, t = 2.6).
