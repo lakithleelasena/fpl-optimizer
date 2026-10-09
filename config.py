@@ -70,14 +70,18 @@ SHARE_SHRINKAGE_K = 6.0
 # 6 matches the k above (a 9-minute cameo ~ 0 weight, a 2,700-minute season ~ 83%).
 SHARE_PRIOR_RELIABILITY_N90 = 6.0
 
-# Minutes-model shrinkage (fpl_client.compute_minutes_model): same Beta-Binomial
-# posterior-mean idea as SHARE_SHRINKAGE_K, applied to start rate / minutes rate /
-# P(60+) / P(1-59) instead of goal share. k=1.5 games (was 6, which let last season's
-# start rate dominate until ~game 6 and under-predicted regulars' minutes). Backtest GW2-5
-# (all 1,668 player-gameweeks): Brier for P(60+) 0.182 at k=6 -> 0.152 at k=1.5 (0.145 at
-# k=1); player-points MAE 1.956 -> 1.911. Flat between k=1 and 2, so 1.5 is the cautious
-# pick. Role/minutes are far stickier than goal output, hence a much smaller k than above.
-MINUTES_SHRINKAGE_GAMES = 1.5
+# Minutes-model (fpl_client.compute_minutes_model): this season's per-game minutes are
+# recency-weighted (a game `a` games ago counts DECAY**a as much as the latest) and then
+# shrunk toward last season's start rate / the position average with a Beta-Binomial-style
+# prior worth MINUTES_SHRINKAGE_GAMES effective games, same idea as SHARE_SHRINKAGE_K.
+# Role and minutes change in steps (rotation, injury, a manager's call), so recent games are
+# far more informative than the whole-season average, and the prior should fade fast.
+# Backtest GW2-5 (1,668 player-gameweeks): flat average with k=6 -> P(60+) Brier 0.182;
+# k=1.5 flat 0.151; decay 0.5 + k=0.75 -> 0.134 (MSE of player points 7.74 -> 7.51).
+# Leave-one-gameweek-out picks decay 0.3 / k 0.5-0.75 every time; improvement is flat across
+# decay 0.3-0.5, so the less extreme 0.5 is used.
+MINUTES_SHRINKAGE_GAMES = 0.75
+MINUTES_RECENCY_DECAY = 0.5
 
 # DefCon thresholds (single-match CBIT/CBIRT count needed for the flat 2-point award) —
 # verified against fantasy.premierleague.com/help/rules 2026-09-17. GKPs aren't eligible

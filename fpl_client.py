@@ -18,6 +18,7 @@ from config import (
     LAST_SEASON_GAMES,
     LEAGUE_AVG_GOALS,
     LEAGUE_AVG_SHRINK_MATCHES,
+    MINUTES_RECENCY_DECAY,
     MINUTES_SHRINKAGE_GAMES,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
@@ -447,41 +448,31 @@ def compute_minutes_model(
     availability: float,
     position_prior: tuple[float, float] = (0.0, 0.0),
     k: float = MINUTES_SHRINKAGE_GAMES,
+    decay: float = MINUTES_RECENCY_DECAY,
 ) -> tuple[float, float, float, float]:
     """
     Returns (exp_start_pct, exp_minutes, p_60_plus, p_1_to_59) — a Beta-prior-blended
-    minutes model, replacing the old flat this-season-only ratio and its hard
-    pre-season-fallback cutover (see Phase 3, PREDICTION_MODEL_PLAN.md). Same
-    Beta-Binomial-posterior-mean shrinkage as Phase 1's compute_xg_share:
-        rate = (n*rate_this_season + k*rate_prior) / (n+k)
-    where n = team_games_so_far (0 pre-season, so the blend correctly reduces to
-    the prior alone — no separate pre-season branch needed, unlike the old code).
+    minutes model (Phase 3, PREDICTION_MODEL_PLAN.md) whose THIS-SEASON rates are
+    recency-weighted: a game `a` games ago counts `decay**a` as much as the latest one.
+    Same Beta-Binomial-style shrinkage as Phase 1's compute_xg_share:
+        rate = (n_eff*rate_now + k*rate_prior) / (n_eff + k)
+    where rate_now is the exponentially weighted rate and n_eff = (sum w)^2 / sum w^2
+    the effective number of games behind it (= the game count for decay=1). With no games
+    yet the blend reduces to the prior alone — no separate pre-season branch.
 
-    p_60_plus / p_1_to_59 are computed directly from real per-game minutes THIS
-    SEASON — no start/appearance conditioning needed, so this naturally captures
-    genuine substitute cameos as well as starts hooked early. The prior can't do
-    the same (history_past has no per-game breakdown, only season totals) —
-    approximated via last season's start rate and a completion-rate proxy from
-    average minutes-per-start (see _completion_rate_from_avg_mins).
+    Why recency: role and minutes change in steps (rotation, an injury, a manager's
+    call), not drift — whether a player went 60+ last game is far more informative than
+    a flat average of the whole season. Backtest GW2-5: P(60+) Brier 0.151 -> ~0.135.
+
+    p_60_plus / p_1_to_59 come straight from real per-game minutes THIS SEASON — no
+    start/appearance conditioning needed, so this captures genuine substitute cameos as
+    well as starts hooked early. The prior can't do the same (history_past has no per-game
+    breakdown, only season totals) — approximated via last season's start rate and a
+    completion-rate proxy from average minutes-per-start (see _completion_rate_from_avg_mins).
 
     Appearance points then become P(1-59)*1 + P(60+)*2 in predictor.py, instead of
     assuming every "start" is worth a flat 2 points.
     """
-    n = team_games_so_far
-    count_appeared = sum(1 for h in history if h.get("minutes", 0) > 0)
-    count_60plus = sum(1 for h in history if h.get("minutes", 0) >= 60)
-    count_1to59 = count_appeared - count_60plus
-    if history and "starts" in history[0]:
-        total_starts = sum(h.get("starts", 0) for h in history)
-    else:
-        total_starts = count_60plus
-    total_minutes = sum(h.get("minutes", 0) for h in history)
-
-    start_rate_now = (total_starts / n) if n > 0 else 0.0
-    minutes_rate_now = (total_minutes / (n * 90)) if n > 0 else 0.0
-    p60_now = (count_60plus / n) if n > 0 else 0.0
-    p1to59_now = (count_1to59 / n) if n > 0 else 0.0
-
     prior_start, prior_completion = position_prior
     if history_past:
         past = sorted(history_past, key=lambda s: s.get("season_name", ""))[-1]
@@ -495,14 +486,33 @@ def compute_minutes_model(
     prior_p60 = prior_start * prior_completion
     prior_p1to59 = max(0.0, prior_start - prior_p60)
 
-    denom = n + k
-    if denom <= 0:
-        exp_start_pct = exp_minutes = p_60_plus = p_1_to_59 = 0.0
+    if team_games_so_far <= 0 or not history:
+        exp_start_pct, exp_minutes, p_60_plus, p_1_to_59 = (
+            prior_start, prior_minutes_rate, prior_p60, prior_p1to59)
     else:
-        exp_start_pct = (n * start_rate_now + k * prior_start) / denom
-        exp_minutes = (n * minutes_rate_now + k * prior_minutes_rate) / denom
-        p_60_plus = (n * p60_now + k * prior_p60) / denom
-        p_1_to_59 = (n * p1to59_now + k * prior_p1to59) / denom
+        count = len(history)
+        weights = [decay ** (count - 1 - i) for i in range(count)]
+        total_w = sum(weights)
+        n_eff = total_w * total_w / sum(w * w for w in weights)
+
+        def weighted(values: list[float]) -> float:
+            return sum(w * v for w, v in zip(weights, values)) / total_w
+
+        mins = [h.get("minutes", 0) for h in history]
+        if "starts" in history[0]:
+            started = [1.0 if h.get("starts", 0) else 0.0 for h in history]
+        else:
+            started = [1.0 if m >= 60 else 0.0 for m in mins]
+        start_rate_now = weighted(started)
+        minutes_rate_now = weighted([m / 90.0 for m in mins])
+        p60_now = weighted([1.0 if m >= 60 else 0.0 for m in mins])
+        p1to59_now = weighted([1.0 if 0 < m < 60 else 0.0 for m in mins])
+
+        denom = n_eff + k
+        exp_start_pct = (n_eff * start_rate_now + k * prior_start) / denom
+        exp_minutes = (n_eff * minutes_rate_now + k * prior_minutes_rate) / denom
+        p_60_plus = (n_eff * p60_now + k * prior_p60) / denom
+        p_1_to_59 = (n_eff * p1to59_now + k * prior_p1to59) / denom
 
     exp_start_pct = round(min(1.0, exp_start_pct * availability), 3)
     exp_minutes = round(min(1.0, exp_minutes * availability), 3)
