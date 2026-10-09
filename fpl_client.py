@@ -10,6 +10,9 @@ from config import (
     AWAY_ADV_MULT,
     BOOTSTRAP_URL,
     CACHE_TTL_SECONDS,
+    DEFCON_PRIOR_FALLBACK,
+    DEFCON_PRIOR_PSEUDO_GAMES,
+    DEFCON_SHRINKAGE_GAMES,
     DEFCON_THRESHOLD,
     ELEMENT_SUMMARY_URL,
     FDR_SENSITIVITY,
@@ -339,25 +342,49 @@ def compute_xg_share(
     return goal_share, assist_share
 
 
-def compute_defcon_hit_rate(history: list[dict], position: str, window: int = 6) -> float:
+def build_defcon_priors(entries: list[tuple[str, list[dict]]]) -> dict[str, float]:
     """
-    Empirical estimate of P(defensive_contribution >= threshold this match), from
-    the player's own history over their last `window` played games — the "start
-    simple" DefCon v1 from Phase 2 (PREDICTION_MODEL_PLAN.md), before a
-    negative-binomial/game-state-adjusted version. FPL's own `defensive_contribution`
-    field already sums exactly the right stats per position (CBIT for defenders,
-    CBIRT for mid/forwards) — no need to combine the individual clearances/blocks/
-    interceptions/tackles/recoveries fields ourselves.
+    League P(DefCon threshold reached | played 60+ minutes) by position, from every
+    player's own history — the shrinkage prior for compute_defcon_hit_rate. Pulled toward
+    DEFCON_PRIOR_FALLBACK by DEFCON_PRIOR_PSEUDO_GAMES pseudo-appearances so a gameweek
+    or two of data can't produce a wild rate. `entries`: (position, history) pairs; the
+    backtest passes per-target-gameweek truncated histories so nothing leaks.
+    """
+    hits: dict[str, float] = defaultdict(float)
+    games: dict[str, float] = defaultdict(float)
+    for pos, history in entries:
+        threshold = DEFCON_THRESHOLD.get(pos)
+        if threshold is None:
+            continue
+        for h in history:
+            if h.get("minutes", 0) >= 60:
+                games[pos] += 1
+                hits[pos] += 1 if h.get("defensive_contribution", 0) >= threshold else 0
+    priors = {}
+    for pos, fallback in DEFCON_PRIOR_FALLBACK.items():
+        priors[pos] = (hits[pos] + DEFCON_PRIOR_PSEUDO_GAMES * fallback) / (games[pos] + DEFCON_PRIOR_PSEUDO_GAMES)
+    return priors
+
+
+def compute_defcon_hit_rate(
+    history: list[dict], position: str, prior_rate: float = 0.0, k: float = DEFCON_SHRINKAGE_GAMES,
+) -> float:
+    """
+    P(defensive_contribution >= threshold | the player plays 60+ minutes), Beta-Binomial
+    shrunk toward the position's league rate (`prior_rate`, see build_defcon_priors):
+        rate = (hits_in_60plus_games + k*prior_rate) / (games_60plus + k)
+    The caller multiplies by P(60+) (predictor.py), so minutes are accounted for once —
+    the previous per-appearance rate times exp_minutes diluted the rate with cameo
+    appearances and then scaled by minutes a second time. FPL's own
+    `defensive_contribution` field already sums exactly the right stats per position
+    (CBIT for defenders, CBIRT for mid/forwards).
     """
     threshold = DEFCON_THRESHOLD.get(position)
     if threshold is None:
         return 0.0
-    played = [h for h in history if h.get("minutes", 0) > 0]
-    recent = played[-window:]
-    if not recent:
-        return 0.0
-    hits = sum(1 for h in recent if h.get("defensive_contribution", 0) >= threshold)
-    return round(hits / len(recent), 4)
+    full = [h for h in history if h.get("minutes", 0) >= 60]
+    hits = sum(1 for h in full if h.get("defensive_contribution", 0) >= threshold)
+    return round((hits + k * prior_rate) / (len(full) + k), 4)
 
 
 def compute_card_rate(history: list[dict], window: int = 6) -> float:
@@ -796,6 +823,9 @@ async def fetch_all_data() -> dict:
         )
 
         # ── Minutes model priors (Phase 3) ────────────────────────────────────
+        defcon_priors = build_defcon_priors(
+            [(pos_lookup.get(pid, "MID"), history) for pid, history, _ in results]
+        )
         minutes_priors = build_minutes_priors(
             [(pos_lookup.get(pid, "MID"), history_past) for pid, _, history_past in results]
         )
@@ -817,7 +847,9 @@ async def fetch_all_data() -> dict:
             player_stats[player_id]["goal_share"] = goal_share
             player_stats[player_id]["assist_share"] = assist_share
             # DefCon + cards (Phase 2) — player-intrinsic, fixture-independent rates
-            player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(history, position)
+            player_stats[player_id]["defcon_hit_rate"] = compute_defcon_hit_rate(
+                history, position, defcon_priors.get(position, 0.0),
+            )
             player_stats[player_id]["card_rate"] = compute_card_rate(history)
             # Opponent-adjusted save rate (Phase 5) — multiplied by this week's
             # match_opp_xg at prediction time, same pattern as goal/assist shares.

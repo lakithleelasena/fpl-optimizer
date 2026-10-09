@@ -107,7 +107,10 @@ def predict_points(
 
     # DefCon and cards — outfield players only (defcon_hit_rate is already 0 for
     # GKP; see fpl_client.compute_defcon_hit_rate).
-    defcon_pts = 2 * defcon_hit_rate
+    # DefCon: defcon_hit_rate is P(threshold | plays 60+ minutes), so it is gated by the
+    # discrete P(60+) and sits OUTSIDE the exp_minutes-scaled bundle below — minutes are
+    # accounted for once (the old per-appearance rate x exp_minutes double-counted them).
+    defcon_term = 2 * defcon_hit_rate * p_60_plus
     card_pts = -card_rate
 
     # Bonus — fitted regression on this season's own per-match data (bonus_model.py),
@@ -116,7 +119,7 @@ def predict_points(
 
     # Everything except clean sheets scales with continuous exp_minutes
     # (proportional pitch-time exposure this match).
-    minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
+    minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts
 
     # Appearance points (Phase 3): P(1-59 min)*1 + P(60+ min)*2, instead of assuming
     # every "start" is worth a flat 2 points — a player subbed off early, or one who
@@ -129,7 +132,7 @@ def predict_points(
     # minutes"), not a pro-rated-by-minutes credit.
     cs_term = p_60_plus * cs_prob * cs_pts * cs_factor
 
-    predicted = appearance_pts + cs_term + exp_minutes * minutes_scaled + form_adj
+    predicted = appearance_pts + cs_term + defcon_term + exp_minutes * minutes_scaled + form_adj
 
     player_xg = round(e_goals + e_assists, 3)
 

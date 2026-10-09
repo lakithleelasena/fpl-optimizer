@@ -89,6 +89,19 @@ MINUTES_RECENCY_DECAY = 0.5
 # and predictor.py can all import it without a circular dependency.
 DEFCON_THRESHOLD: dict[str, int | None] = {"GKP": None, "DEF": 10, "MID": 12, "FWD": 12}
 
+# DefCon hit rate (fpl_client.compute_defcon_hit_rate): P(reaching the threshold | plays 60+ minutes),
+# a player's own rate over this season's 60+ minute games shrunk toward the position's league rate
+# with weight DEFCON_SHRINKAGE_GAMES such games. Over ~4 games a raw per-player rate is noisier than
+# just using the position average (backtest GW2-5 Brier 0.088 raw vs 0.081 position mean vs 0.075
+# shrunk), and conditioning on 60+ minutes stops cameo appearances diluting the rate while
+# exp_minutes then scales it a second time. The league rate itself is shrunk toward the fallback
+# below by DEFCON_PRIOR_PSEUDO_GAMES pseudo-appearances, so the first gameweeks don't use a
+# tiny-sample rate; fallbacks are this season's GW1-5 league rates among 60+ minute appearances
+# (FWD threshold is essentially never reached).
+DEFCON_SHRINKAGE_GAMES = 4.0
+DEFCON_PRIOR_PSEUDO_GAMES = 20.0
+DEFCON_PRIOR_FALLBACK: dict[str, float] = {"GKP": 0.0, "DEF": 0.25, "MID": 0.12, "FWD": 0.0}
+
 # Penalty saves (Phase 5, PREDICTION_MODEL_PLAN.md): a small flat GKP-only term,
 # not fixture-specific — we don't have team-level penalty-award data (see Phase
 # 4's scoped-out penalty split), so this uses commonly-cited league-wide rates

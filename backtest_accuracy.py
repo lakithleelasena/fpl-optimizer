@@ -33,6 +33,7 @@ from config import (
 )
 import bonus_model
 from fpl_client import (
+    build_defcon_priors,
     build_minutes_priors,
     build_position_priors,
     build_team_xg_rolling,
@@ -489,6 +490,15 @@ def compute_player_points_backtest(
                 entries.append((meta_p["position"], prior_hist))
         bonus_coeffs_by_gw[target_gw] = bonus_model.fit(entries)
 
+    # League DefCon rate by position, per target gameweek from only strictly-earlier games.
+    defcon_priors_by_gw = {
+        gw: build_defcon_priors([
+            (player_meta[pid]["position"], [h for h in hist if h["round"] < gw])
+            for pid, hist in raw_histories.items() if pid in player_meta
+        ])
+        for gw in all_target_gws
+    }
+
     rows: list[dict] = []
     skipped_no_prior = 0
 
@@ -552,7 +562,9 @@ def compute_player_points_backtest(
 
             # DefCon + cards (Phase 2) — same empirical hit-rate as the live pipeline,
             # computed from prior (not gameweek-truncated-to-share_window) history.
-            defcon_hit_rate = compute_defcon_hit_rate(prior, position)
+            defcon_hit_rate = compute_defcon_hit_rate(
+                prior, position, defcon_priors_by_gw[target_gw].get(position, 0.0),
+            )
             card_rate = compute_card_rate(prior)
 
             cs_pts = _CS_PTS[position]
@@ -573,18 +585,19 @@ def compute_player_points_backtest(
             goal_pts = e_goals * _PTS_PER_GOAL[position] * atk_factor
             asst_pts = e_assists * 3 * atk_factor
 
-            defcon_pts = 2 * defcon_hit_rate
+            # DefCon: P(threshold | 60+) gated by P(60+), outside the exp_minutes bundle (see predictor.py).
+            defcon_term = 2 * defcon_hit_rate * p_60_plus
             card_pts = -card_rate
             bonus_pts = bonus_model.predict_bonus_with_coeffs(
                 bonus_coeffs_by_gw[target_gw], e_goals, e_assists, cs_prob, e_saves, defcon_hit_rate,
             )
 
-            minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + defcon_pts + card_pts + bonus_pts
+            minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts
             appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
             # Clean sheet points (Phase 5) gated by discrete P(60+), not continuous
             # exp_minutes — see predictor.py for the FPL-rule rationale.
             cs_term = p_60_plus * cs_prob * cs_pts * cs_factor
-            predicted = appearance_pts + cs_term + exp_minutes * minutes_scaled + form_adj
+            predicted = appearance_pts + cs_term + defcon_term + exp_minutes * minutes_scaled + form_adj
 
             predicted = round(max(0.0, predicted), 2)
             actual = entry["total_points"]
@@ -597,7 +610,7 @@ def compute_player_points_backtest(
                 "goals_conceded": exp_minutes * xgc_pts,
                 "saves": exp_minutes * (save_pts + pen_save_pts),
                 "bonus": exp_minutes * bonus_pts,
-                "defcon": exp_minutes * defcon_pts,
+                "defcon": defcon_term,
                 "cards": exp_minutes * card_pts,
                 "form_adj": form_adj,
                 "other": 0.0,
