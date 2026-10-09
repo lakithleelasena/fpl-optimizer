@@ -1,4 +1,6 @@
-"""Permanent per-gameweek archive of FPL's set-piece taker orders.
+"""LEGACY per-gameweek archive of FPL's set-piece taker orders (superseded by snapshot.py, which
+also archives availability, prices, FPL's ep_next and our predictions; load_set_piece_history()
+below reads both). archive_set_piece_snapshot is no longer called.
 
 The bootstrap `elements` carry penalties_order, direct_freekicks_order and
 corners_and_indirect_freekicks_order (1 = first-choice taker; None = not listed) — the
@@ -45,11 +47,18 @@ def archive_set_piece_snapshot(gw_id: int, elements: list[dict]) -> None:
 
 
 def load_set_piece_history() -> dict[int, dict[int, dict[str, int]]]:
-    """{gw: {player_id: {"pen": n, "fk": n, "corner": n}}} — gameweeks never archived are absent."""
-    return {
+    """{gw: {player_id: {"pen": n, "fk": n, "corner": n}}} — gameweeks never archived are absent.
+    Reads the legacy set_piece_history.json AND the per-gameweek snapshot archive (snapshot.py);
+    a snapshot wins for a gameweek in both."""
+    from snapshot import list_snapshots  # lazy: snapshot imports this module
+
+    out = {
         int(gw): {int(pid): orders for pid, orders in entry.get("players", {}).items()}
         for gw, entry in _read().items()
     }
+    for gw, snap in list_snapshots().items():
+        out[gw] = {int(pid): p["orders"] for pid, p in snap["players"].items() if p.get("orders")}
+    return out
 
 
 def _read() -> dict:

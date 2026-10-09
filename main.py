@@ -28,6 +28,8 @@ from models import (
 from backtest_accuracy import compute_player_points_backtest, compute_team_xg_backtest
 from config import W_ODDS_WEIGHT
 from optimizer import optimize_squad, recommend_transfers
+from snapshot import snapshot_status
+from predictions import gw1_player as _gw1_player, gwN_player as _gwN_player
 from predictor import predict_points
 
 app = FastAPI(title="FPL Squad Optimizer")
@@ -42,41 +44,6 @@ async def index(request: Request):
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
-
-
-def _gw1_player(player: dict, upcoming_gws: list, team_strengths: dict, odds_weight: float = W_ODDS_WEIGHT) -> dict:
-    """Return a copy of player with opponents/strengths/n_fixtures restricted to GW1 only."""
-    return _gwN_player(player, upcoming_gws[0] if upcoming_gws else None, team_strengths, odds_weight)
-
-
-def _gwN_player(player: dict, gw_id, team_strengths: dict, odds_weight: float = W_ODDS_WEIGHT) -> dict:
-    """Return a copy of player with fixture context set for a specific GW."""
-    if gw_id is None:
-        return player
-    opps = player["gw_fixtures"].get(gw_id, [])
-    strengths = [team_strengths.get(o, 0) for o in opps]
-    is_home = player.get("gw_home", {}).get(gw_id, 0.5)
-    fdr_ease = player.get("gw_ease", {}).get(gw_id)
-    gw_xg = player.get("gw_match_xg", {}).get(gw_id, {})
-    # Blend Tier 1 (odds) with the model (Tier 2/3) when odds are available for this
-    # fixture; otherwise fall back to the model alone. Done per-request (not cached)
-    # so the odds_weight slider takes effect without needing a fresh data fetch.
-    if gw_xg.get("odds_team_xg") is not None:
-        match_team_xg = odds_weight * gw_xg["odds_team_xg"] + (1 - odds_weight) * gw_xg.get("model_team_xg", 0.0)
-        match_opp_xg = odds_weight * gw_xg["odds_opp_xg"] + (1 - odds_weight) * gw_xg.get("model_opp_xg", 0.0)
-    else:
-        match_team_xg = gw_xg.get("model_team_xg", 0.0)
-        match_opp_xg = gw_xg.get("model_opp_xg", 0.0)
-    return {
-        **player,
-        "opponents": opps,
-        "opponent_strengths": strengths,
-        "n_fixtures": len(opps),
-        "is_home": is_home,
-        "_gw_ease": fdr_ease,
-        "match_team_xg": round(match_team_xg, 3),
-        "match_opp_xg": round(match_opp_xg, 3),
-    }
 
 
 def _player_gw_pts(out: dict, upcoming_gws: list) -> list:
@@ -241,6 +208,23 @@ async def refresh_odds():
         "fixtures_found": len(odds),
         "fetched_at": meta["fetched_at"] if meta else None,
     }
+
+
+@app.get("/api/snapshot/status")
+async def get_snapshot_status():
+    """Upcoming gameweek, its deadline and the last saved snapshot (see snapshot.py)."""
+    data = await fetch_all_data()
+    return snapshot_status(data)
+
+
+@app.post("/api/snapshot")
+async def save_snapshot_now():
+    """Force a fresh FPL fetch (bypassing the 30-minute cache) and save the upcoming gameweek's
+    snapshot, replacing any earlier one for it. Never calls the Odds API — odds are recorded
+    as currently cached (only Refresh Odds pulls live odds)."""
+    invalidate_cache()
+    data = await fetch_all_data(snapshot_trigger="button")
+    return snapshot_status(data)
 
 
 @app.get("/api/next-gw")

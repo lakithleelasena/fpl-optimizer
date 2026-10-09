@@ -39,7 +39,8 @@ from config import (
 )
 import bonus_model
 from odds_client import fetch_odds_xg
-from set_piece_history import archive_set_piece_snapshot, extract_orders
+from set_piece_history import extract_orders
+from snapshot import save_snapshot
 
 _cache: dict = {}
 _cache_time: float = 0.0
@@ -804,7 +805,7 @@ def _build_gw_match_xg(
     return result
 
 
-async def fetch_all_data() -> dict:
+async def fetch_all_data(snapshot_trigger: str = "auto") -> dict:
     global _cache, _cache_time
 
     now = time.time()
@@ -865,12 +866,6 @@ async def fetch_all_data() -> dict:
 
         # ── Active players ───────────────────────────────────────────────────
         elements = bootstrap["elements"]
-        # Taker orders are current-only in the API — archive them per gameweek (like the odds
-        # history) so later backtests can use what was in force at the time.
-        try:
-            archive_set_piece_snapshot(next_gw, elements)
-        except OSError:
-            pass  # read-only filesystem etc. — the archive is a bonus, never block a fetch
         active_players = [
             p for p in elements
             if p["minutes"] > 0
@@ -1116,7 +1111,16 @@ async def fetch_all_data() -> dict:
         "team_rolling": team_rolling,
         "league_avg_attack": league_avg_attack,
         "league_avg_defence": league_avg_defence,
+        "events": bootstrap["events"],
+        "elements": elements,
     }
+
+    # Archive this gameweek's live-only data + our predictions (replaces the gameweek's earlier
+    # snapshot; see snapshot.py). Never block or fail a fetch over it.
+    try:
+        save_snapshot(data, trigger=snapshot_trigger)
+    except Exception as exc:  # noqa: BLE001 — archive is a bonus
+        print(f"[snapshot] not saved: {exc!r}")
 
     _cache = data
     _cache_time = time.time()
