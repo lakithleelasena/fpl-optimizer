@@ -35,6 +35,7 @@ from config import (
 )
 import bonus_model
 from odds_client import fetch_odds_xg
+from set_piece_history import archive_set_piece_snapshot, extract_orders
 
 _cache: dict = {}
 _cache_time: float = 0.0
@@ -808,6 +809,12 @@ async def fetch_all_data() -> dict:
 
         # ── Active players ───────────────────────────────────────────────────
         elements = bootstrap["elements"]
+        # Taker orders are current-only in the API — archive them per gameweek (like the odds
+        # history) so later backtests can use what was in force at the time.
+        try:
+            archive_set_piece_snapshot(next_gw, elements)
+        except OSError:
+            pass  # read-only filesystem etc. — the archive is a bonus, never block a fetch
         active_players = [
             p for p in elements
             if p["minutes"] > 0
@@ -992,6 +999,10 @@ async def fetch_all_data() -> dict:
                 "threat": float(p.get("threat") or 0),
                 "xgc": float(p.get("expected_goals_conceded") or 0),
                 "ep_next": float(p.get("ep_next") or 0),
+                # FPL set-piece taker orders (1 = first choice; None = not listed)
+                "pen_order": extract_orders(p)["pen"],
+                "fk_order": extract_orders(p)["fk"],
+                "corner_order": extract_orders(p)["corner"],
                 "stats": stats,
                 # New participation fields
                 "goal_share": stats["goal_share"],
