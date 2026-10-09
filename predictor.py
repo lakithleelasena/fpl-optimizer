@@ -4,7 +4,10 @@ import math
 
 import bonus_model
 from config import (
+    LEAGUE_AVG_GOALS,
     PENALTY_AWARD_RATE_PER_MATCH,
+    PENALTY_CONVERSION_RATE,
+    PENALTY_MISS_PTS,
     PENALTY_SAVE_PTS,
     PENALTY_SAVE_RATE,
     W_ATK_FACTOR,
@@ -30,6 +33,40 @@ def _expected_floor_half_poisson(lam: float) -> float:
     under the old formula, but a real Poisson(1.9) variable is >=2 over 40% of the time).
     """
     return lam / 2 - (1 - math.exp(-2 * lam)) / 4
+
+
+def _pen_award_rate(team_xg: float) -> float:
+    """Expected penalties AWARDED to a team in a match: the league rate scaled by its attack."""
+    return PENALTY_AWARD_RATE_PER_MATCH * max(team_xg, 0.0) / LEAGUE_AVG_GOALS
+
+
+def goal_expectation(
+    match_team_xg: float, goal_share: float, pen_taker_prob: float = 0.0, pen_leftover: float = 1.0,
+) -> tuple[float, float]:
+    """
+    Expected goals for one player per full match on the pitch, and the expected missed-penalty
+    points (negative). Shared by predict_points and the backtest so they can't drift.
+
+    match_team_xg includes penalties (bookmaker totals and real xG both do), so the expected
+    penalty goals are stripped to get open-play xG; goal_share is a NON-penalty share (see
+    fpl_client.compute_xg_share). Penalties come back via pen_taker_prob = P(he takes it | on the
+    pitch) from FPL's penalties_order and who is fit (fpl_client.compute_pen_taker_chain); the
+    leftover (no listed taker on the pitch, or the ~10% a taker doesn't take) is spread over
+    on-pitch players by open-play share. With no taker info (q = 0, leftover = 1) this reduces
+    to the old match_team_xg * goal_share.
+    """
+    pen_rate = _pen_award_rate(match_team_xg)
+    pen_goals_team = pen_rate * PENALTY_CONVERSION_RATE
+    open_xg = max(0.0, match_team_xg - pen_goals_team)
+    e_goals = (open_xg + pen_goals_team * pen_leftover) * goal_share + pen_goals_team * pen_taker_prob
+    pen_miss_pts = PENALTY_MISS_PTS * pen_rate * (1 - PENALTY_CONVERSION_RATE) * pen_taker_prob
+    return e_goals, pen_miss_pts
+
+
+def goalkeeper_penalty_save_pts(match_opp_xg: float) -> float:
+    """Expected penalty-save points per match for a goalkeeper: penalties the OPPONENT is
+    awarded (scaled by its attack) x save rate x 5 points."""
+    return _pen_award_rate(match_opp_xg) * PENALTY_SAVE_RATE * PENALTY_SAVE_PTS
 
 
 def predict_points(
@@ -90,17 +127,16 @@ def predict_points(
     e_saves = saves_per_opp_xg * match_opp_xg if position == "GKP" else 0.0
     save_pts = expected_floor_div_poisson(e_saves, 3) if position == "GKP" else 0.0
 
-    # Penalty saves (Phase 5): a small flat GKP-only term — we don't have
-    # team-level penalty-award data (see Phase 4's scoped-out penalty split), so
-    # this uses league-wide literature rates rather than a fixture-specific estimate.
-    pen_save_pts = (
-        PENALTY_AWARD_RATE_PER_MATCH * PENALTY_SAVE_RATE * PENALTY_SAVE_PTS
-        if position == "GKP" else 0.0
-    )
+    # Penalty saves (Phase 5): a small GKP-only term — the league-wide penalty award rate
+    # (literature value, no per-team data) scaled by the opponent's attack, times the save rate.
+    pen_save_pts = goalkeeper_penalty_save_pts(match_opp_xg) if position == "GKP" else 0.0
 
     # Attacking returns — same shape for every position (rare for GKP/DEF, primary
     # scoring source for MID/FWD).
-    e_goals = match_team_xg * goal_share
+    pen_taker_prob = float(player.get("pen_taker_prob") or 0.0)
+    pen_leftover = player.get("pen_leftover")
+    pen_leftover = 1.0 if pen_leftover is None else float(pen_leftover)
+    e_goals, pen_miss_pts = goal_expectation(match_team_xg, goal_share, pen_taker_prob, pen_leftover)
     e_assists = match_team_xg * assist_share
     goal_pts = e_goals * _PTS_PER_GOAL[position] * atk_factor
     asst_pts = e_assists * 3 * atk_factor
@@ -119,7 +155,7 @@ def predict_points(
 
     # Everything except clean sheets scales with continuous exp_minutes
     # (proportional pitch-time exposure this match).
-    minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts
+    minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts + pen_miss_pts
 
     # Appearance points (Phase 3): P(1-59 min)*1 + P(60+ min)*2, instead of assuming
     # every "start" is worth a flat 2 points — a player subbed off early, or one who

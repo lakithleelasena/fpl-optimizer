@@ -27,6 +27,10 @@ from config import (
     LEAGUE_AVG_SHRINK_MATCHES,
     MINUTES_RECENCY_DECAY,
     MINUTES_SHRINKAGE_GAMES,
+    PENALTY_AWARD_RATE_PER_MATCH,
+    PENALTY_NOMINAL_WEIGHTS,
+    PENALTY_TAKER_RELIABILITY,
+    PENALTY_XG,
     POSITION_MAP,
     SEMAPHORE_LIMIT,
     SHARE_PRIOR_RELIABILITY_N90,
@@ -279,6 +283,7 @@ def compute_xg_share(
     position_prior: tuple[float, float] = (0.0, 0.0),
     k: float = SHARE_SHRINKAGE_K,
     window: int = 6,
+    pen_weight: float = 0.0,
 ) -> tuple[float, float]:
     """
     xG-based share of team output, shrunk toward a prior — replaces a raw
@@ -319,7 +324,22 @@ def compute_xg_share(
             team_xg_total += team_xg_by_fixture.get(team_id, {}).get(fid, 0.0)
             team_xa_total += team_xa_by_fixture.get(team_id, {}).get(fid, 0.0)
 
-    share_goal_now = (player_xg / team_xg_total) if team_xg_total > 0 else 0.0
+    # NON-PENALTY goal share: FPL's xG includes penalties (0.76 each) and we can't tell which
+    # past games had one, so remove the EXPECTED penalty share of team xG
+    # (pen_xg_share = award rate x 0.76 / league goals ~ 6.8%) — all of it from the team total, and
+    # `pen_weight` (this player's nominal share of the team's penalties, see pen_nominal_weight)
+    # of it from the player's own share:
+    #     share_np = (share - pen_weight * pen_xg_share) / (1 - pen_xg_share)
+    # Done on the share, not by subtracting an absolute 0.09 xG per game, which explodes in a game
+    # where the team's xG was tiny (a penalty clearly didn't happen). Non-penalty shares still sum
+    # to ~1 across a squad (sum of pen_weights ~ 1). Penalties are then added back explicitly in
+    # predictor.goal_expectation from who is actually fit to take them.
+    if team_xg_total > 0:
+        pen_xg_share = PENALTY_AWARD_RATE_PER_MATCH * PENALTY_XG / LEAGUE_AVG_GOALS
+        share_raw = player_xg / team_xg_total
+        share_goal_now = max(0.0, share_raw - pen_weight * pen_xg_share) / (1.0 - pen_xg_share)
+    else:
+        share_goal_now = 0.0
     share_assist_now = (player_xa / team_xa_total) if team_xa_total > 0 else 0.0
 
     n90 = sum(h.get("minutes", 0) for h in history) / 90.0
@@ -345,6 +365,42 @@ def compute_xg_share(
     goal_share = round((n90 * share_goal_now + k * prior_goal) / denom, 4)
     assist_share = round((n90 * share_assist_now + k * prior_assist) / denom, 4)
     return goal_share, assist_share
+
+
+def pen_nominal_weight(pen_order: int | None) -> float:
+    """Nominal share of a team's penalties for a player at this FPL penalties_order (everyone
+    fit); 0 if not listed. Only used to strip expected penalty xG from historical xG."""
+    return PENALTY_NOMINAL_WEIGHTS.get(pen_order, 0.0) if pen_order else 0.0
+
+
+def compute_pen_taker_chain(
+    team_takers: list[tuple[int, int, float]],
+) -> tuple[dict[int, float], float]:
+    """
+    Who takes a team's next penalty, given who is likely to be on the pitch.
+
+    `team_takers`: (player_id, penalties_order, exp_minutes) for that team's LISTED takers.
+    Walks the list in order: the first taker on the pitch takes it with probability
+    PENALTY_TAKER_RELIABILITY, otherwise it falls through to the next listed taker, and so on.
+    a_j = exp_minutes is the chance the player is on the pitch when the penalty is awarded.
+
+    Returns (q, leftover):
+      q[player_id]  = P(he takes the penalty | he is on the pitch) = r * prod_{earlier}(1 - a_j)
+                      — conditional on being on the pitch, so the predictor can scale it by
+                      exp_minutes exactly like the open-play terms;
+      leftover      = P(nobody listed takes it) = 1 - sum_i a_i * q_i. That share is spread over
+                      everyone on the pitch in proportion to their open-play goal share, so team
+                      expected goals stay equal to the team's xG.
+    """
+    q: dict[int, float] = {}
+    none_before = 1.0
+    taken = 0.0
+    for pid, _order, a in sorted(team_takers, key=lambda t: t[1]):
+        a = min(1.0, max(0.0, a))
+        q[pid] = PENALTY_TAKER_RELIABILITY * none_before
+        taken += a * q[pid]
+        none_before *= (1.0 - a)
+    return q, max(0.0, 1.0 - taken)
 
 
 def build_defcon_priors(entries: list[tuple[str, list[dict]]]) -> dict[str, float]:
@@ -893,6 +949,7 @@ async def fetch_all_data() -> dict:
             prior = position_priors.get(position, (0.0, 0.0))
             goal_share, assist_share = compute_xg_share(
                 history, history_past, tid, team_xg_by_fixture, team_xa_by_fixture, prior,
+                pen_weight=pen_nominal_weight(elem_lookup.get(player_id, {}).get("penalties_order")),
             )
             player_stats[player_id]["goal_share"] = goal_share
             player_stats[player_id]["assist_share"] = assist_share
@@ -1027,6 +1084,19 @@ async def fetch_all_data() -> dict:
                 "team_attack_xg6": t_rolling.get("attack_xg6", 0.0),
                 "team_defence_xg6": t_rolling.get("defence_xg6", 0.0),
             })
+
+    # ── Penalty takers (explicit model) ──────────────────────────────────────
+    # Per team: who takes a penalty given who is likely to be on the pitch. Needs every
+    # teammate's exp_minutes, hence a pass after the player list is built.
+    by_team: dict[int, list[tuple[int, int, float]]] = defaultdict(list)
+    for pl in players:
+        if pl["pen_order"]:
+            by_team[pl["team_id"]].append((pl["id"], pl["pen_order"], pl["exp_minutes"]))
+    chains = {tid: compute_pen_taker_chain(takers) for tid, takers in by_team.items()}
+    for pl in players:
+        q, leftover = chains.get(pl["team_id"], ({}, 1.0))
+        pl["pen_taker_prob"] = round(q.get(pl["id"], 0.0), 4)   # P(takes it | on the pitch)
+        pl["pen_leftover"] = round(leftover, 4)                 # P(no listed taker takes it)
 
     data = {
         "players": players,

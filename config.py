@@ -114,11 +114,24 @@ CARD_PRIOR_PSEUDO_N90 = 100.0
 CARD_YELLOW_FALLBACK_PER90: dict[str, float] = {"GKP": 0.03, "DEF": 0.17, "MID": 0.19, "FWD": 0.23}
 CARD_RED_FALLBACK_PER90 = 0.0055
 
-# Penalty saves (Phase 5, PREDICTION_MODEL_PLAN.md): a small flat GKP-only term,
-# not fixture-specific — we don't have team-level penalty-award data (see Phase
-# 4's scoped-out penalty split), so this uses commonly-cited league-wide rates
-# rather than a per-team estimate. Literature defaults, not locally fit.
-PENALTY_AWARD_RATE_PER_MATCH = 0.09  # ~1 penalty per team roughly every 11 games
+# Penalties (explicit model — fpl_client.compute_pen_taker_chain / predictor.predict_points).
+# Rates are league-wide literature values, not locally fit (we have no per-team penalty data):
+# The Analyst counted ~0.23 awarded per match (0.115 per team) over the first 13 matchdays of
+# 2024/25 and ~107 awards (0.28 per match, 0.14 per team) in 2023/24; conversion was 82.6% /
+# 89.7% in those samples against a long-run ~78-80%. 0.12 / 0.80 sit in the middle — calibrate
+# against takers' goal residuals once more gameweeks exist (PENALTY_AWARD_RATE is the key knob).
+# A team's award rate scales with its attacking strength: rate * match_team_xg / LEAGUE_AVG_GOALS.
+PENALTY_AWARD_RATE_PER_MATCH = 0.12  # penalties awarded to ONE team per match, at league-average attack
+PENALTY_CONVERSION_RATE = 0.80       # share of penalties scored
+PENALTY_XG = 0.76                    # Opta xG of a penalty — FPL's expected_goals includes penalties
+# P(the first AVAILABLE listed taker actually takes it) — the rest goes to whoever is on the pitch.
+PENALTY_TAKER_RELIABILITY = 0.90
+# Nominal share of a team's penalties by FPL penalties_order when everyone is fit; used only to
+# strip the EXPECTED penalty xG out of a player's historical xG so open-play shares aren't
+# double-counted (we can't tell which past games had a penalty).
+PENALTY_NOMINAL_WEIGHTS: dict[int, float] = {1: 0.90, 2: 0.06, 3: 0.02, 4: 0.01, 5: 0.01}
+PENALTY_MISS_PTS = -2
+# Goalkeepers: penalties faced scale with the OPPONENT's attack, same award rate as above.
 PENALTY_SAVE_RATE = 0.21             # ~1 in 5 penalties saved by keepers
 PENALTY_SAVE_PTS = 5
 

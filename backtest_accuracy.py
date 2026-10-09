@@ -22,9 +22,6 @@ from collections import defaultdict
 
 from config import (
     LEAGUE_AVG_GOALS,
-    PENALTY_AWARD_RATE_PER_MATCH,
-    PENALTY_SAVE_PTS,
-    PENALTY_SAVE_RATE,
     W_ATK_FACTOR,
     W_CS_FACTOR,
     W_FORM_FACTOR,
@@ -44,6 +41,8 @@ from fpl_client import (
     compute_league_avg_goals,
     compute_mean_fdr,
     compute_minutes_model,
+    compute_pen_taker_chain,
+    pen_nominal_weight,
     compute_saves_rate,
     compute_xg_share,
     tier2_weight,
@@ -51,7 +50,14 @@ from fpl_client import (
     tier3_xg,
 )
 from odds_client import load_odds_history
-from predictor import _CS_PTS, _PTS_PER_GOAL, _expected_floor_half_poisson
+from predictor import (
+    _CS_PTS,
+    _PTS_PER_GOAL,
+    _expected_floor_half_poisson,
+    goal_expectation,
+    goalkeeper_penalty_save_pts,
+)
+from set_piece_history import load_set_piece_history
 from team_xg_model import expected_floor_div_poisson
 
 FORM_WINDOW = 4  # games used to approximate FPL's own "form" stat (see note in compute_player_points_backtest)
@@ -508,6 +514,38 @@ def compute_player_points_backtest(
         for gw in all_target_gws
     }
 
+    # Penalty takers: FPL's penalties_order (the archived value for that gameweek when we have
+    # one, else TODAY'S order — a mild look-ahead, role orders are sticky) and, per team and
+    # gameweek, the chain of who is likely on the pitch to take it (needs every listed
+    # teammate's expected minutes, including those with no appearances yet, so a pre-pass).
+    archived_orders = load_set_piece_history()
+
+    def pen_order_at(pid: int, gw: int) -> int | None:
+        if gw in archived_orders:
+            return archived_orders[gw].get(pid, {}).get("pen")
+        return player_meta.get(pid, {}).get("pen_order")
+
+    team_takers: dict[tuple[int, int], list[tuple[int, int, float]]] = defaultdict(list)
+    for pid, hist in raw_histories.items():
+        pmeta = player_meta.get(pid)
+        if not pmeta:
+            continue
+        hist_sorted = sorted(hist, key=lambda h: h["round"])
+        for i, e in enumerate(hist_sorted):
+            gw = e["round"]
+            order = pen_order_at(pid, gw)
+            if not order:
+                continue
+            games_before = _team_games_before(fixtures, pmeta["team_id"], gw)
+            if games_before <= 0:
+                continue
+            _, exp_min, _, _ = compute_minutes_model(
+                hist_sorted[:i], player_history_past.get(pid), games_before, 1.0,
+                minutes_priors.get(pmeta["position"], (0.0, 0.0)),
+            )
+            team_takers[(pmeta["team_id"], gw)].append((pid, order, exp_min))
+    pen_chains = {key: compute_pen_taker_chain(v) for key, v in team_takers.items()}
+
     rows: list[dict] = []
     skipped_no_prior = 0
 
@@ -549,10 +587,13 @@ def compute_player_points_backtest(
             # prior — see compute_xg_share. Pass the FULL prior history (n90 needs
             # every game played this season, not just the share window); share_window
             # only controls the "last N played games" share numerator/denominator.
+            pen_order = pen_order_at(player_id, target_gw)
             goal_share, assist_share = compute_xg_share(
                 prior, history_past, team_id, team_xg_by_fixture, team_xa_by_fixture,
-                prior_position, window=share_window,
+                prior_position, window=share_window, pen_weight=pen_nominal_weight(pen_order),
             )
+            pen_q, pen_leftover = pen_chains.get((team_id, target_gw), ({}, 1.0))
+            pen_taker_prob = pen_q.get(player_id, 0.0)
 
             # Season avg (all prior played games) and form proxy (trailing FORM_WINDOW games)
             season_avg = sum(h["total_points"] for h in played_prior) / len(played_prior)
@@ -584,12 +625,9 @@ def compute_player_points_backtest(
             saves_per_opp_xg = compute_saves_rate(prior, team_xg_by_fixture) if position == "GKP" else 0.0
             e_saves = saves_per_opp_xg * match_opp_xg if position == "GKP" else 0.0
             save_pts = expected_floor_div_poisson(e_saves, 3) if position == "GKP" else 0.0
-            pen_save_pts = (
-                PENALTY_AWARD_RATE_PER_MATCH * PENALTY_SAVE_RATE * PENALTY_SAVE_PTS
-                if position == "GKP" else 0.0
-            )
+            pen_save_pts = goalkeeper_penalty_save_pts(match_opp_xg) if position == "GKP" else 0.0
 
-            e_goals = match_team_xg * goal_share
+            e_goals, pen_miss_pts = goal_expectation(match_team_xg, goal_share, pen_taker_prob, pen_leftover)
             e_assists = match_team_xg * assist_share
             goal_pts = e_goals * _PTS_PER_GOAL[position] * atk_factor
             asst_pts = e_assists * 3 * atk_factor
@@ -601,7 +639,7 @@ def compute_player_points_backtest(
                 bonus_coeffs_by_gw[target_gw], e_goals, e_assists, cs_prob, e_saves, defcon_hit_rate,
             )
 
-            minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts
+            minutes_scaled = xgc_pts + save_pts + pen_save_pts + goal_pts + asst_pts + card_pts + bonus_pts + pen_miss_pts
             appearance_pts = p_1_to_59 * 1 + p_60_plus * 2
             # Clean sheet points (Phase 5) gated by discrete P(60+), not continuous
             # exp_minutes — see predictor.py for the FPL-rule rationale.
@@ -622,7 +660,7 @@ def compute_player_points_backtest(
                 "defcon": defcon_term,
                 "cards": exp_minutes * card_pts,
                 "form_adj": form_adj,
-                "other": 0.0,
+                "other": exp_minutes * pen_miss_pts,  # expected missed-penalty points; actual "other" also has reds/own goals
             }
             rows.append({
                 "gw": target_gw, "player_id": player_id, "name": meta["name"],
