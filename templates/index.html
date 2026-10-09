@@ -337,6 +337,20 @@
         <!-- ===== TAB: Prediction Accuracy ===== -->
         <div class="tab-content hidden" id="tab-accuracy">
 
+            <!-- Live accuracy (archived predictions) -->
+            <div class="section-card">
+                <h2>Live Accuracy — the predictions the app actually made</h2>
+                <p class="section-hint">
+                    Each gameweek's snapshot (saved before its deadline) holds our predicted points and
+                    FPL's own <code>ep_next</code>. Once a gameweek finishes they are scored against real points —
+                    a true out-of-sample test, nothing reconstructed. Rows are the players we predicted
+                    (selected on predictions only), the same rows for both. Gameweeks appear here only
+                    if a snapshot was saved for them.
+                </p>
+                <button class="btn-optimize" id="btn-live-accuracy" style="max-width:260px">Load Live Accuracy</button>
+                <div id="live-accuracy-results"></div>
+            </div>
+
             <!-- Team xG Accuracy -->
             <div class="section-card">
                 <h2>Team Expected Goals — Predicted vs Actual</h2>

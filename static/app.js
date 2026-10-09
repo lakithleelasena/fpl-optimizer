@@ -29,6 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#btn-transfer-advice").addEventListener("click", runTransferAdvice);
     $("#btn-team-xg-backtest").addEventListener("click", runTeamXgBacktest);
     $("#btn-player-points-backtest").addEventListener("click", runPlayerPointsBacktest);
+    $("#btn-live-accuracy").addEventListener("click", runLiveAccuracy);
 
     // Position filter buttons
     $$(".filter-btn").forEach((btn) => {
@@ -711,6 +712,77 @@ function penBadge(p) {
     const tip = `Penalty taker #${p.pen_order} (FPL order)` +
         (share != null ? ` — about ${share}% chance he takes his team's next penalty given current availability` : "");
     return `<span class="pen-badge${dim ? " dim" : ""}" title="${tip}">P${p.pen_order}</span>`;
+}
+
+// ─── Prediction Accuracy: live accuracy (archived predictions) ───────────────
+
+async function runLiveAccuracy() {
+    const btn = $("#btn-live-accuracy");
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    try {
+        const resp = await fetch("/api/backtest/live-accuracy");
+        if (!resp.ok) throw new Error(`Error ${resp.status}`);
+        renderLiveAccuracy(await resp.json());
+    } catch (e) {
+        $("#live-accuracy-results").innerHTML = `<p style="color:#ff6b6b">Failed to load: ${e.message}</p>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Load Live Accuracy";
+    }
+}
+
+function renderLiveAccuracy(data) {
+    const el = $("#live-accuracy-results");
+    if (!data.gameweeks.length) {
+        el.innerHTML = `<p class="section-hint" style="margin-top:12px">No snapshots saved yet.</p>`;
+        return;
+    }
+    const f = (v, d = 2) => (v == null ? "–" : v.toFixed(d));
+    const sgn = v => (v > 0 ? "+" : "") + v.toFixed(2);
+    const better = (a, b) => (a < b ? "#00ff87" : "#e0e0e0");
+    const scored = data.gameweeks.filter(g => g.status === "scored");
+    const pending = data.gameweeks.filter(g => g.status !== "scored");
+
+    let html = "";
+    if (pending.length) {
+        html += `<p class="section-hint" style="margin-top:12px">` + pending.map(g =>
+            `GW${g.gameweek}: snapshot saved` +
+            (g.fixtures_total != null ? ` — ${g.fixtures_finished}/${g.fixtures_total} fixtures finished, scored once all are done` : ` — ${g.note || "waiting"}`) +
+            (g.odds_present ? "" : " (saved without odds)")).join("<br>") + `</p>`;
+    }
+    if (scored.length) {
+        const rows = scored.map(g => `
+            <tr>
+                <td>GW${g.gameweek}</td><td>${g.n}</td>
+                <td style="color:${better(g.ours.mae, g.fpl.mae)};font-weight:600">${f(g.ours.mae)}</td><td>${f(g.fpl.mae)}</td>
+                <td style="color:${better(g.ours.rmse, g.fpl.rmse)};font-weight:600">${f(g.ours.rmse)}</td><td>${f(g.fpl.rmse)}</td>
+                <td>${sgn(g.ours.bias)}</td><td>${sgn(g.fpl.bias)}</td>
+                <td style="color:${g.spearman.ours > g.spearman.fpl ? "#00ff87" : "#e0e0e0"};font-weight:600">${f(g.spearman.ours)}</td><td>${f(g.spearman.fpl)}</td>
+                <td>${g.top_overlap["10"].ours} / ${g.top_overlap["10"].fpl}</td>
+                <td>${g.top_overlap["20"].ours} / ${g.top_overlap["20"].fpl}</td>
+                <td>${g.captain.ours.name} <b>${g.captain.ours.actual}</b></td>
+                <td>${g.captain.fpl.name} <b>${g.captain.fpl.actual}</b></td>
+                <td>${g.captain.best_actual}</td>
+            </tr>`).join("");
+        const pooled = data.pooled
+            ? `<tr style="border-top:2px solid #30363d"><td>All</td><td>${data.pooled.n}</td>
+                <td style="font-weight:600">${f(data.pooled.ours.mae)}</td><td>${f(data.pooled.fpl.mae)}</td>
+                <td style="font-weight:600">${f(data.pooled.ours.rmse)}</td><td>${f(data.pooled.fpl.rmse)}</td>
+                <td>${sgn(data.pooled.ours.bias)}</td><td>${sgn(data.pooled.fpl.bias)}</td><td colspan="7"></td></tr>` : "";
+        html += `
+            <div style="overflow-x:auto;margin-top:12px"><table class="players-table">
+                <thead><tr><th>GW</th><th>Players</th><th>MAE ours</th><th>FPL</th><th>RMSE ours</th><th>FPL</th>
+                    <th>Bias ours</th><th>FPL</th><th>Rank corr ours</th><th>FPL</th>
+                    <th>Top-10 hit (ours / FPL)</th><th>Top-20 hit</th><th>Our captain (pts)</th><th>FPL's captain (pts)</th><th>Best</th></tr></thead>
+                <tbody>${rows}${pooled}</tbody></table></div>
+            <p class="section-hint">Bias = predicted − actual. Rank corr = Spearman correlation of predicted vs actual points across the players.
+            Top-N hit = how many of the N highest-scoring players were in the N we (or FPL) ranked highest. Captain = the highest-predicted player.
+            Green = the better of the two.</p>`;
+    } else {
+        html += `<p class="section-hint">No archived gameweek has finished yet — results appear here once the first one does.</p>`;
+    }
+    el.innerHTML = html;
 }
 
 // ─── Prediction Accuracy: tier-weight fit ─────────────────────────────────────

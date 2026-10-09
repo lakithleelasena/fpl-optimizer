@@ -28,7 +28,8 @@ from models import (
 from backtest_accuracy import compute_player_points_backtest, compute_team_xg_backtest
 from config import W_ODDS_WEIGHT
 from optimizer import optimize_squad, recommend_transfers
-from snapshot import snapshot_status
+from live_accuracy import compute_live_accuracy
+from snapshot import list_snapshots, snapshot_status
 from predictions import gw1_player as _gw1_player, gwN_player as _gwN_player
 from predictor import predict_points
 
@@ -402,6 +403,16 @@ async def get_transfer_advice(req: TransferRequest):
         total_predicted_3gw=total_predicted_3gw,
         n_gw=req.n_gw,
         upcoming_gws=data["upcoming_gws"][:req.n_gw],
+    )
+
+
+@app.get("/api/backtest/live-accuracy")
+async def run_live_accuracy():
+    """The predictions the app actually made (archived snapshots, saved before each deadline)
+    scored against real points, with FPL's own ep_next as a benchmark — a true out-of-sample test."""
+    data = await fetch_all_data()
+    return await asyncio.to_thread(
+        compute_live_accuracy, data["raw_histories"], data["fixtures"], list_snapshots(),
     )
 
 
