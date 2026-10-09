@@ -66,6 +66,8 @@ document.addEventListener("DOMContentLoaded", () => {
     loadSavedSquad();
     loadPlayers();
     loadNextGw();
+    loadArchiveStatus();
+    setInterval(renderArchiveBar, 60000);  // keep the countdown fresh without hitting the server
 });
 
 async function loadNextGw() {
@@ -76,6 +78,72 @@ async function loadNextGw() {
     } catch (e) {
         $("#next-gw-badge").textContent = "";
     }
+}
+
+// ─── Snapshot archive (header bar) ───────────────────────────────────────────
+
+let _archiveStatus = null;
+
+async function loadArchiveStatus() {
+    try {
+        const resp = await fetch("/api/snapshot/status");
+        _archiveStatus = await resp.json();
+    } catch (e) {
+        _archiveStatus = null;
+    }
+    renderArchiveBar();
+}
+
+async function saveSnapshotNow() {
+    const btn = document.getElementById("btn-snapshot");
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    try {
+        const resp = await fetch("/api/snapshot", { method: "POST" });
+        if (!resp.ok) throw new Error(`Error ${resp.status}`);
+        _archiveStatus = await resp.json();
+    } catch (e) {
+        alert("Snapshot failed: " + e.message);
+    }
+    renderArchiveBar();
+}
+
+function _fmtDuration(mins) {
+    const m = Math.max(0, Math.round(mins));
+    const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+    return (d ? `${d}d ` : "") + (h || d ? `${h}h ` : "") + `${mm}m`;
+}
+
+function _fmtLocal(iso) {
+    return new Date(iso).toLocaleString([], {
+        weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    });
+}
+
+function renderArchiveBar() {
+    const el = document.getElementById("archive-bar");
+    if (!el) return;
+    const st = _archiveStatus;
+    if (!st) { el.innerHTML = ""; return; }
+    const now = Date.now();
+    const toDeadline = st.deadline_time ? (new Date(st.deadline_time).getTime() - now) / 60000 : null;
+    const snap = st.snapshot;
+    let html = `<span>Archive GW${st.gameweek}`;
+    if (st.deadline_time) html += ` · deadline ${_fmtLocal(st.deadline_time)}` + (toDeadline > 0 ? ` (in ${_fmtDuration(toDeadline)})` : " (passed — refresh the page)");
+    html += `</span>`;
+    if (!snap) {
+        html += `<span class="warn">no snapshot saved yet</span>`;
+    } else {
+        const age = (now - new Date(snap.saved_at).getTime()) / 60000;
+        const before = st.deadline_time ? (new Date(st.deadline_time).getTime() - new Date(snap.saved_at).getTime()) / 60000 : null;
+        const stale = toDeadline != null && toDeadline > 0 && toDeadline <= 360 && age > 60;
+        html += `<span class="${stale ? "warn" : "ok"}">snapshot saved ${_fmtLocal(snap.saved_at)}` +
+            (before != null ? ` (${_fmtDuration(before)} before deadline)` : "") +
+            ` · ${snap.save_count} save${snap.save_count === 1 ? "" : "s"} · ` +
+            (snap.odds_present ? "odds included" : "NO odds this GW — model only") + `</span>`;
+        if (stale) html += `<span class="warn">deadline soon — save again</span>`;
+    }
+    html += `<button id="btn-snapshot" class="btn-snapshot" onclick="saveSnapshotNow()" title="Fresh FPL pull + replace this gameweek's snapshot. Never calls the Odds API.">Save snapshot now</button>`;
+    el.innerHTML = html;
 }
 
 // ─── Players ─────────────────────────────────────────────────────────────────
@@ -984,6 +1052,7 @@ async function refreshOdds() {
         if (!resp.ok) throw new Error(body.detail || `Error ${resp.status}`);
         _teamsData = null;
         await loadTeams(true);
+        loadArchiveStatus();
         if (body.status === "stale") {
             alert("Live odds refresh failed (quota limit or API error) — still showing the last saved odds, no data was lost. Try again later.");
         }

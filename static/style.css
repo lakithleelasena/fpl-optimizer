@@ -966,3 +966,34 @@ label.slider-label {
     cursor: help;
 }
 .pen-badge.dim { opacity: 0.4; }
+
+/* Snapshot archive status bar (header) */
+.archive-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #e6edf3;
+}
+.archive-bar .ok { color: #e6edf3; }
+.archive-bar .warn {
+    background: #f5a623;
+    color: #0e1117;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+}
+.archive-bar .btn-snapshot {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 0.25rem 0.8rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+.archive-bar .btn-snapshot:hover:not(:disabled) { background: #30363d; border-color: #8b949e; }
+.archive-bar .btn-snapshot:disabled { opacity: 0.5; cursor: default; }
