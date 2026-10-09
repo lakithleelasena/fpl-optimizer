@@ -533,3 +533,51 @@ target gameweeks with 2-3 tuned numbers per change — re-check around GW10.
 not xG), FWD assist share, penalty/set-piece takers (`penalties_order` etc. in the bootstrap data;
 current-only, so forward-test only), archiving our predictions and FPL's `ep_next` each gameweek for
 a true out-of-sample benchmark, and ranking metrics (top-N overlap, captain pick, predicted-best XI).
+
+---
+
+## Penalty takers (2026-10-08, GW6 next)
+
+**Data.** The bootstrap `elements` carry `penalties_order`, `direct_freekicks_order` and
+`corners_and_indirect_freekicks_order` (1 = first choice; 20 teams each have exactly one #1;
+~56 active players have a penalty rank). They are current-only, so `fetch_all_data` now snapshots
+them per gameweek into `set_piece_history.json` (last fetch before the deadline wins), and the
+backtest uses the archived order for a gameweek when it exists, otherwise today's (mild look-ahead
+— orders are sticky). At GW6, 6 of the 20 first-choice takers were doubtful or out (Kroupi Jr,
+Wright, Mateta, Diarra at 0%, Osula 50%, Palmer 75%), so who takes the next penalty is a live question.
+
+**Why explicit.** Backtest GW2-5: the model was already roughly unbiased for takers' goals
+(−0.004 ± 0.044 goals/gameweek for #1 takers) but their xG exceeded the prediction by +0.066/gw
+(t = 2.3), consistent with a missing ~0.07 goals ≈ 0.3-0.4 points/gw. FPL's xG includes penalties (0.76
+each) so shares already carry them, but lumpily and without knowing who is fit. A cheap prior bump
+on takers' share would double-count as observed xG arrives and ignore availability.
+
+**Model** (`predictor.goal_expectation`, `fpl_client.compute_pen_taker_chain`):
+- Penalties awarded to a team: `PENALTY_AWARD_RATE_PER_MATCH` (0.12, scaled by match_team_xg / league avg
+  goals) × `PENALTY_CONVERSION_RATE` (0.80) = expected penalty goals. Team xG includes them, so they are
+  stripped to get open-play xG.
+- `goal_share` is now a NON-penalty share: the expected penalty share of team xG (0.12 × 0.76 / 1.35 ≈
+  6.8%) is removed from the team total and, by nominal `penalties_order` weight (0.90 / 0.06 / 0.02 / 0.01 /
+  0.01), from the taker's own share. Done at the share level, not by subtracting an absolute 0.09 xG per
+  game — the first version did that and a MID in a low-xG game was predicted at 15 points.
+- Who takes it: walk the listed order; the first taker on the pitch (a = exp_minutes) takes it with
+  probability 0.90 (`PENALTY_TAKER_RELIABILITY`), otherwise it falls through. `q` = P(takes it | on the
+  pitch) scales with exp_minutes like the open-play terms; the leftover (no listed taker on the pitch, or the
+  other 10%) is spread over on-pitch players by open-play share, so team expected goals are unchanged.
+- Expected missed penalties (−2 × (1 − 0.80)) are charged to the taker; the goalkeeper penalty-save term now
+  uses the same award rate scaled by the opponent's attack (was a flat 0.09).
+- Player tables show a P1/P2… badge, dimmed when the chance he takes the next penalty is under 10%.
+
+**Result (backtest GW2-5, 1,467 rows).** Overall MSE 7.347 → 7.346, MAE 1.860 → 1.862 — neutral, as expected:
+only ~5% of rows change. #1 takers' MSE 18.48 → 18.30, #2-3 9.48 → 9.61 (n = 102, noise), non-takers unchanged.
+The case for this is structural and for live use (e.g. Palace has no fit taker; Palmer at 75%), not the
+backtest score. Live: Fernandes 6.47 → 6.78, Saka 5.98 → 6.23, Haaland 5.96 → 6.05.
+
+**Not done / to watch.**
+- Corners and direct free kicks (skipped by decision): corner #2-3 takers' assists were under-predicted by
+  +0.064/gw (t = 2.6, one of ~12 tests); direct-FK #1 goals +0.055 (n.s.). Re-test after GW10 with the
+  archived snapshots.
+- `PENALTY_AWARD_RATE_PER_MATCH` is the key knob (literature value; no per-team data). Calibrate against
+  #1 takers' goal residuals after GW10 and check Σ(team players' expected goals) vs team xG.
+- Last season's share prior (`history_past`) still includes that season's penalties for former takers — not stripped.
+- Taker-specific conversion rates are tiny samples (Haaland 57% cited), so the league rate is used for everyone.
