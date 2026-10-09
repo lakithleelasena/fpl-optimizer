@@ -245,7 +245,7 @@ function renderSquadBuilder() {
         const slotsEl = $(`#slots-${pos}`);
         let html = players.map((p) => `
             <div class="squad-slot filled">
-                <span class="slot-name">${p.name}</span>
+                <span class="slot-name">${p.name}${penBadge(p)}</span>
                 <span class="slot-team">${p.team} · £${p.cost.toFixed(1)}m</span>
                 <button class="slot-remove" onclick="removePlayerFromSquad(${p.id})" title="Remove">✕</button>
             </div>
@@ -285,7 +285,7 @@ function onSquadSearch() {
         return `
             <div class="search-result-item ${disabled ? "disabled" : ""}"
                  onclick="${disabled ? "" : `addPlayerToSquad(${JSON.stringify(p).replace(/"/g, "&quot;")})`}">
-                <span class="sr-name">${p.name}${note}</span>
+                <span class="sr-name">${p.name}${penBadge(p)}${note}</span>
                 <span class="sr-meta">${p.team} · ${p.position} · £${p.cost.toFixed(1)}m · ${p.predicted_points.toFixed(1)}pts</span>
             </div>`;
     }).join("");
@@ -530,7 +530,7 @@ function cardHTML(p, isCaptain = false, isViceCaptain = false, show3gw = false, 
     return `
         <div class="player-card pos-${p.position}" style="position:relative">
             ${badge}
-            <div class="player-name">${p.name}</div>
+            <div class="player-name">${p.name}${penBadge(p)}</div>
             <div class="player-team">${p.team} · ${p.position}</div>
             <div class="player-pts">${displayPts.toFixed(1)}<span class="pts-label">${ptsLabel}</span></div>
             ${gwBreakdown}
@@ -577,7 +577,7 @@ function renderTable() {
             const addLabel = inSquad ? "Added" : full ? "Full" : "+ Add";
             return `
         <tr>
-            <td>${p.name}</td>
+            <td>${p.name}${penBadge(p)}</td>
             <td>${p.team}</td>
             <td>${p.position}</td>
             <td>£${p.cost.toFixed(1)}m</td>
@@ -632,6 +632,17 @@ function groupTopBottomByGw(rows, gws, n = 5) {
 
 function groupHeaderRow(label, colspan) {
     return `<tr><td colspan="${colspan}" style="background:#1c2128;font-weight:700;color:#8b949e;padding:8px 12px">${label}</td></tr>`;
+}
+
+// Penalty-taker badge: P1 = FPL's first-choice taker. Dimmed when he's unlikely to take the next
+// one (injured / rotation risk) — pen_share already folds in availability and the order chain.
+function penBadge(p) {
+    if (!p.pen_order) return "";
+    const share = p.pen_share == null ? null : Math.round(p.pen_share * 100);
+    const dim = share != null && share < 10;
+    const tip = `Penalty taker #${p.pen_order} (FPL order)` +
+        (share != null ? ` — about ${share}% chance he takes his team's next penalty given current availability` : "");
+    return `<span class="pen-badge${dim ? " dim" : ""}" title="${tip}">P${p.pen_order}</span>`;
 }
 
 // ─── Prediction Accuracy: tier-weight fit ─────────────────────────────────────

@@ -34,6 +34,8 @@ class PlayerOut(BaseModel):
     threat_score: float = 0.0
     xgc_score: float = 0.0
     ep_next: float = 0.0
+    pen_order: Optional[int] = None   # FPL penalties_order (1 = first-choice taker); None = not listed
+    pen_share: Optional[float] = None  # P(he takes his team's next penalty), given current availability
 
 
 class SquadPlayer(PlayerOut):

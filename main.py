@@ -117,6 +117,9 @@ def _build_player_out(player: dict, prediction: dict) -> dict:
         "threat_score": prediction["threat_score"],
         "xgc_score": prediction["xgc_score"],
         "ep_next": round(player.get("ep_next", 0.0), 2),
+        "pen_order": player.get("pen_order"),
+        "pen_share": round((player.get("exp_minutes") or 0.0) * (player.get("pen_taker_prob") or 0.0), 3)
+                     if player.get("pen_order") else None,
         "chance_of_playing": player.get("chance_of_playing"),
         "minutes": player["minutes"],
         "total_points": player["total_points"],
@@ -151,6 +154,8 @@ def _to_player_out(p: dict) -> PlayerOut:
         threat_score=p.get("threat_score", 0.0),
         xgc_score=p.get("xgc_score", 0.0),
         ep_next=p.get("ep_next", 0.0),
+        pen_order=p.get("pen_order"),
+        pen_share=p.get("pen_share"),
     )
 
 
@@ -177,6 +182,8 @@ def _to_squad_player(p: dict, is_starter: bool) -> SquadPlayer:
         threat_score=p.get("threat_score", 0.0),
         xgc_score=p.get("xgc_score", 0.0),
         ep_next=p.get("ep_next", 0.0),
+        pen_order=p.get("pen_order"),
+        pen_share=p.get("pen_share"),
         is_starter=is_starter,
     )
 

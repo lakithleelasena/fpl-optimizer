@@ -950,3 +950,19 @@ label.slider-label {
     .transfer-row { flex-direction: column; }
     .transfer-out, .transfer-in { text-align: left; }
 }
+
+/* Penalty-taker badge (P1 = first-choice taker) */
+.pen-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.5;
+    vertical-align: middle;
+    color: #0e1117;
+    background: #f5a623;
+    cursor: help;
+}
+.pen-badge.dim { opacity: 0.4; }
