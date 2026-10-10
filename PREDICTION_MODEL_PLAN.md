@@ -625,3 +625,32 @@ gameweek with `exp_minutes`, P(60+), penalty share and blended match xG; the upc
 - After GW6 finishes, the first live-accuracy row appears; read it as a single noisy gameweek until ~5+ are archived.
 - Candidates once snapshots accumulate: use archived market data (price/ownership) as features, and test the
   corner/free-kick order effects with leak-free orders (assists residual for corner #2-3 takers was +0.064, t = 2.6).
+
+---
+
+## Post-GW10 re-check list (added 2026-10-09)
+
+Everything tuned so far rests on four target gameweeks (GW2-5), so these are due for a re-test once ~GW10 data exists.
+
+**New: cap a single game's influence on the xG share (checked 2026-10-09, not changed).**
+One huge game can inflate a player's goal/assist share until more games accumulate — e.g. B.Fernandes: 2.02 of his 2.56
+season xG came in GW2 (a hat-trick game), his other four games were 2 points each, and the model says 6.78 for GW6.
+Read-only backtest GW2-5: only 13 of 1,467 rows are "outlier-driven" (single-game xG ≥ 1.0 and ≥ 60% of the last-six-game xG,
+≥ 3 games played) — Fernandes, Mbeumo, Wissa, De Cuyper, Isidor, Barry, João Pedro, Tavernier. For those rows E[goals] was
+0.331 vs 0.252 actual xG and 0.154 actual goals (~+0.08 goals/game ≈ 0.4 pts for a midfielder; ~1 standard error, n = 13).
+Premium rows (predicted ≥ 5, n = 36): 0.473 vs 0.417 xG — within noise. Capping each game's xG in the share numerator
+(team denominator unchanged) cut the outlier group's error vs actual xG by 10-13% and its points MSE 14.26 → 13.88, but total
+points MSE only moved 7.194 → 7.186. GW6 effect if applied: Fernandes 6.78 → 6.20 (cap 1.0) / 6.08 (cap 0.8), Mbeumo 6.17 → 5.75 / 5.64,
+Saka 6.23 → 6.04 / 5.94, Haaland 6.05 → 6.00 / 5.84, Palmer unchanged. A larger share prior (k = 9) did not help.
+**To do at GW10:** rerun with more outlier cases (same flag, plus premium-only); if outlier-driven rows are still over-predicted,
+winsorize each game's xG at 0.8-1.0 in `compute_xg_share`'s numerator only. A real big game is partly signal (a penalty plus chances),
+so prefer a cap over dropping the game.
+
+**Already on the list elsewhere in this doc (all due ~GW10):**
+- Calibrate `PENALTY_AWARD_RATE_PER_MATCH` (0.12) against #1 penalty takers' goal residuals; check team expected goals sum.
+- Re-validate the minutes recency parameters (decay 0.5, k 0.75), DefCon and card shrinkage constants.
+- Re-test whether last season's priors still matter (share prior fades with n90; minutes prior is already tiny).
+- Corners/free kicks, using the leak-free archived orders (corner #2-3 takers' assists were +0.064/gw under-predicted, t = 2.6).
+- `odds_weight` once ≥ 30 fixtures have odds (best 0.3 at GW5, bootstrap 0-1; default 0.6).
+- First reads of the live accuracy table (archived predictions vs real points vs FPL's `ep_next`); one gameweek is noise.
+- Clean-sheet gap (−0.08): revisit GW12-15; if still ~25% low, use the joint Dixon-Coles P(0 goals) rather than exp(−λ).
