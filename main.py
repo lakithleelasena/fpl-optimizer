@@ -467,6 +467,7 @@ async def get_teams():
     # Goals for/against from finished fixtures
     goals_for: dict[int, int] = {}
     goals_against: dict[int, int] = {}
+    record: dict[int, dict[str, int]] = {}
     for fix in fixtures:
         if fix.get("finished") and fix.get("team_h_score") is not None:
             h, a = fix["team_h"], fix["team_a"]
@@ -475,6 +476,30 @@ async def get_teams():
             goals_for[a] = goals_for.get(a, 0) + as_
             goals_against[h] = goals_against.get(h, 0) + as_
             goals_against[a] = goals_against.get(a, 0) + hs
+            # The bootstrap teams' played/win/draw/loss/points/position are not maintained by FPL
+            # (all zero, position stale), so build the table from the finished fixtures instead.
+            for tid, gf_, ga_ in ((h, hs, as_), (a, as_, hs)):
+                rec = record.setdefault(tid, {"played": 0, "won": 0, "drawn": 0, "lost": 0, "points": 0})
+                rec["played"] += 1
+                if gf_ > ga_:
+                    rec["won"] += 1
+                    rec["points"] += 3
+                elif gf_ == ga_:
+                    rec["drawn"] += 1
+                    rec["points"] += 1
+                else:
+                    rec["lost"] += 1
+
+
+    # League position: points, then goal difference, then goals scored, then name. Before any
+    # match has been played fall back to the API's own (static) position.
+    def _table_key(t: dict):
+        tid = t["id"]
+        pts = record.get(tid, {}).get("points", 0)
+        gf_ = goals_for.get(tid, 0)
+        return (-pts, -(gf_ - goals_against.get(tid, 0)), -gf_, t["name"])
+
+    league_position = {t["id"]: i + 1 for i, t in enumerate(sorted(bootstrap_teams, key=_table_key))} if record else {}
 
     # Per-team upcoming fixtures for the tracker GWs
     # {team_id: {gw_id: [{opp_id, opp_short, is_home, fdr}]}}
@@ -546,12 +571,12 @@ async def get_teams():
             "id": tid,
             "name": t["name"],
             "short_name": t["short_name"],
-            "position": t.get("position", 0),
-            "played": t.get("played", 0),
-            "won": t.get("win", 0),
-            "drawn": t.get("draw", 0),
-            "lost": t.get("loss", 0),
-            "points": t.get("points", 0),
+            "position": league_position.get(tid, t.get("position", 0)),
+            "played": record.get(tid, {}).get("played", 0),
+            "won": record.get(tid, {}).get("won", 0),
+            "drawn": record.get(tid, {}).get("drawn", 0),
+            "lost": record.get(tid, {}).get("lost", 0),
+            "points": record.get(tid, {}).get("points", 0),
             "goals_for": gf,
             "goals_against": ga,
             "goal_diff": gf - ga,
