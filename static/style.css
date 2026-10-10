@@ -997,3 +997,7 @@ label.slider-label {
 }
 .archive-bar .btn-snapshot:hover:not(:disabled) { background: #30363d; border-color: #8b949e; }
 .archive-bar .btn-snapshot:disabled { opacity: 0.5; cursor: default; }
+
+.control-hint { display: block; font-size: 0.72rem; color: #8b949e; font-weight: 400; margin-top: 2px; }
+label .control-hint { display: inline; margin-left: 4px; }
+.control-hint a { color: #58a6ff; cursor: pointer; text-decoration: underline; }

@@ -24,6 +24,26 @@ document.addEventListener("DOMContentLoaded", () => {
         oddsWeightVal.textContent = `${Math.round(parseFloat(oddsWeightSlider.value) * 100)}%`;
     });
 
+    // One optimisation horizon shared by the Squad Optimizer and Transfer Advice (persisted).
+    const horizonSelects = [$("#n-gw"), $("#n-gw-transfer")];
+    let savedHorizon = null;
+    try { savedHorizon = localStorage.getItem("fpl_horizon"); } catch (e) { /* ignore */ }
+    horizonSelects.forEach((sel) => { if (savedHorizon) sel.value = savedHorizon; });
+    horizonSelects.forEach((sel) => sel.addEventListener("change", () => {
+        horizonSelects.forEach((other) => { other.value = sel.value; });
+        try { localStorage.setItem("fpl_horizon", sel.value); } catch (e) { /* ignore */ }
+    }));
+    horizonSelects[1].value = horizonSelects[0].value;  // the two always start in step
+
+    // Budget auto-fills with squad value + bank until the user types their own figure.
+    $("#budget").addEventListener("input", (ev) => {
+        if (ev.isTrusted) { _budgetManual = true; updateBudgetFromSquad(); }
+    });
+    $("#bank").addEventListener("input", updateBudgetFromSquad);
+    $("#budget-hint").addEventListener("click", (ev) => {
+        if (ev.target.dataset.reset) { _budgetManual = false; updateBudgetFromSquad(); }
+    });
+
     $("#btn-optimize").addEventListener("click", runOptimize);
     $("#search").addEventListener("input", renderTable);
     $("#btn-transfer-advice").addEventListener("click", runTransferAdvice);
@@ -150,14 +170,14 @@ function renderArchiveBar() {
 // ─── Players ─────────────────────────────────────────────────────────────────
 
 async function loadPlayers() {
-    $("#table-body").innerHTML = '<tr><td colspan="11" class="loading"><span class="spinner"></span>Loading players...</td></tr>';
+    $("#table-body").innerHTML = '<tr><td colspan="15" class="loading"><span class="spinner"></span>Loading players...</td></tr>';
     try {
         const resp = await fetch("/api/players");
         allPlayers = await resp.json();
         renderTable();
-        renderSquadBuilder();
+        renderSquadBuilder();  // also refreshes the auto budget with current prices
     } catch (e) {
-        $("#table-body").innerHTML = `<tr><td colspan="11" class="loading">Failed to load: ${e.message}</td></tr>`;
+        $("#table-body").innerHTML = `<tr><td colspan="15" class="loading">Failed to load: ${e.message}</td></tr>`;
     }
 }
 
@@ -172,7 +192,7 @@ async function runOptimize() {
 
     const body = {
         budget: parseInt($("#budget").value) || 1000,
-        n_gw: parseInt($("#n-gw").value) || 1,
+        n_gw: parseInt($("#n-gw").value) || 3,
         form_factor: parseFloat($("#form-factor").value),
         cs_factor: parseFloat($("#cs-factor").value),
         atk_factor: parseFloat($("#atk-factor").value),
@@ -303,7 +323,38 @@ function removePlayerFromSquad(playerId) {
     renderSquadBuilder();
 }
 
+// Squad value at CURRENT prices (not FPL selling prices — we don't have purchase prices) + bank,
+// in tenths — what a Wildcard/Free Hit can actually spend, and what Transfer Advice assumes.
+// Pre-fills the Squad Optimizer budget once 15 players are picked, unless the user typed their own.
+let _budgetManual = false;
+
+function squadValueTenths() {
+    const current = new Map(allPlayers.map((p) => [p.id, p.cost]));
+    const squad = Object.values(mySquad).flat();
+    const players = squad.reduce((sum, p) => sum + Math.round((current.get(p.id) ?? p.cost) * 10), 0);
+    const bank = Math.round(parseFloat($("#bank").value || "0") * 10);
+    return players + bank;
+}
+
+function updateBudgetFromSquad() {
+    const input = $("#budget"), hint = $("#budget-hint");
+    if (!input || !hint) return;
+    if (squadCount() !== 15) {
+        hint.textContent = "Add 15 players on My Team to fill this with your squad value + bank.";
+        return;
+    }
+    const value = squadValueTenths();
+    const label = `£${(value / 10).toFixed(1)}m`;
+    if (_budgetManual) {
+        hint.innerHTML = `Manual budget. Squad value + bank is ${label} — <a data-reset="1">use that</a>`;
+    } else {
+        input.value = value;
+        hint.textContent = `Auto: squad value at current prices + bank = ${label}`;
+    }
+}
+
 function renderSquadBuilder() {
+    updateBudgetFromSquad();
     const total = squadCount();
     $("#squad-total-count").textContent = total;
 
@@ -386,6 +437,7 @@ async function runTransferAdvice() {
         form_factor: parseFloat($("#form-factor").value),
         cs_factor: parseFloat($("#cs-factor").value),
         atk_factor: parseFloat($("#atk-factor").value),
+        odds_weight: parseFloat($("#odds-weight").value),
     };
 
     try {
@@ -651,6 +703,7 @@ function renderTable() {
             <td>${p.position}</td>
             <td>£${p.cost.toFixed(1)}m</td>
             <td style="color:#00ff87;font-weight:600">${p.predicted_points.toFixed(1)}</td>
+            <td style="color:#58a6ff;font-weight:600">${p.predicted_points_4gw != null ? p.predicted_points_4gw.toFixed(1) : "-"}</td>
             <td style="color:${slColor}">${slPct}%</td>
             <td style="color:${startColor(p.exp_minutes)}">${Math.round(p.exp_minutes * 100)}%</td>
             <td style="color:${fixtureColor(p.fixture_ease)}">${fixtureLabel(p.fixture_ease)}</td>

@@ -33,13 +33,14 @@
                 <div class="control-group">
                     <label>Budget (tenths, e.g. 1000 = £100.0m)</label>
                     <input type="number" id="budget" value="1000" min="500" max="2000" step="10">
+                    <small id="budget-hint" class="control-hint"></small>
                 </div>
                 <div class="control-group">
-                    <label>Optimise for</label>
+                    <label>Optimise for <span class="control-hint" title="One horizon shared with the Transfer Settings below, so both tabs optimise the same thing">(shared)</span></label>
                     <select id="n-gw" class="gw-select">
-                        <option value="1" selected>Next 1 Gameweek</option>
+                        <option value="1">Next 1 Gameweek</option>
                         <option value="2">Next 2 Gameweeks</option>
-                        <option value="3">Next 3 Gameweeks</option>
+                        <option value="3" selected>Next 3 Gameweeks</option>
                         <option value="4">Next 4 Gameweeks</option>
                     </select>
                 </div>
@@ -160,7 +161,7 @@
                         <input type="number" id="bank" value="0.0" min="0" max="20" step="0.1">
                     </div>
                     <div class="control-group">
-                        <label>Optimise transfers over</label>
+                        <label>Optimise transfers over <span class="control-hint" title="Shared with the Squad Optimizer's Optimise for setting">(shared)</span></label>
                         <select id="n-gw-transfer" class="gw-select">
                             <option value="1">Next 1 Gameweek</option>
                             <option value="2">Next 2 Gameweeks</option>
@@ -263,6 +264,7 @@
                                 <th onclick="sortTable('position')">Pos</th>
                                 <th onclick="sortTable('cost')">Cost</th>
                                 <th onclick="sortTable('predicted_points')">GW Pts</th>
+                                <th onclick="sortTable('predicted_points_4gw')" title="Predicted points over the next 4 gameweeks: blank gameweeks count 0, double gameweeks count both matches">4GW Pts</th>
                                 <th onclick="sortTable('start_likelihood')">Exp Start%</th>
                                 <th onclick="sortTable('exp_minutes')">Exp Min%</th>
                                 <th onclick="sortTable('fixture_ease')">Fixture</th>
@@ -275,7 +277,7 @@
                             </tr>
                         </thead>
                         <tbody id="table-body">
-                            <tr><td colspan="14" class="loading"><span class="spinner"></span>Loading...</td></tr>
+                            <tr><td colspan="15" class="loading"><span class="spinner"></span>Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>

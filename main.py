@@ -248,7 +248,19 @@ async def get_players(
         pred = predict_points(
             p_gw1, form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
         )
-        result.append(_build_player_out(p_gw1, pred))
+        out = _build_player_out(p_gw1, pred)
+        # Next-4-gameweek total: per-match prediction x fixtures each gameweek (a blank gameweek
+        # counts 0, a double gameweek counts both matches), same arithmetic as the optimizer's gw_pts.
+        total_4gw = 0.0
+        for gw_id in data["upcoming_gws"][:4]:
+            p_gwN = _gwN_player(p, gw_id, data["team_strengths"], odds_weight)
+            n_fix = len(p.get("gw_fixtures", {}).get(gw_id, []))
+            if n_fix:
+                total_4gw += round(predict_points(
+                    p_gwN, form_factor=form_factor, cs_factor=cs_factor, atk_factor=atk_factor,
+                )["predicted_points"] * n_fix, 2)
+        out["predicted_points_4gw"] = round(total_4gw, 2)
+        result.append(out)
     result.sort(key=lambda x: x["predicted_points"], reverse=True)
     return result
 
