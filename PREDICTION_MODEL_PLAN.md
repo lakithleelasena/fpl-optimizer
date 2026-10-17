@@ -646,6 +646,19 @@ Saka 6.23 → 6.04 / 5.94, Haaland 6.05 → 6.00 / 5.84, Palmer unchanged. A lar
 winsorize each game's xG at 0.8-1.0 in `compute_xg_share`'s numerator only. A real big game is partly signal (a penalty plus chances),
 so prefer a cap over dropping the game.
 
+**New: first-start minutes adjustment (checked 2026-10-16 after GW6, not changed).**
+Henderson (Chelsea, 0.0% owned, £4.9m) was in the hindsight-best GW6 XI with 18 points: 0, 0, 0, 0, 90 minutes before GW6, our
+model gave him 47 expected minutes (the recency-weighted rate after one start is ~50%), he played 90 again and scored 2 goals + 1 assist
+from 0.14 xG. Nothing outside our own history flagged him: ownership, price, transfers-in, set-piece orders (only a #3 corner),
+teammates injured/suspended and FPL's `ep_next` showed no useful lift (AUC ~0.5-0.67, wide intervals, mostly "played last game").
+The one flag is internal: across GW2-6, players whose latest game was their first 60+ minutes of the season (earlier games all < 60,
+>= 2 of them) played 60+ again 69% of the time (n = 49) against a model P(60+) of 54%; the strict version (every earlier game 0 minutes)
+was 7 of 8. The opposite pattern — a regular who missed the last game (the João Pedro case) — is OVER-predicted: 24% actual vs 40% model
+(n = 50), so the two roughly cancel overall: adding a "started last game" term to the minutes probability only improved leave-one-GW-out
+Brier from 0.1377 to 0.1354. **To do at GW10:** re-measure both patterns with more weeks; if first-start under-prediction holds
+(actual - model >= ~10 points at n >= 80) add a first-start/absent-last-game term to `compute_minutes_model`, validated leave-one-GW-out.
+Even a perfect minutes call would leave most of Henderson's 18 points (goals + bonus on low xG) unforecastable.
+
 **Already on the list elsewhere in this doc (all due ~GW10):**
 - Calibrate `PENALTY_AWARD_RATE_PER_MATCH` (0.12) against #1 penalty takers' goal residuals; check team expected goals sum.
 - Re-validate the minutes recency parameters (decay 0.5, k 0.75), DefCon and card shrinkage constants.
@@ -654,3 +667,4 @@ so prefer a cap over dropping the game.
 - `odds_weight` once ≥ 30 fixtures have odds (best 0.3 at GW5, bootstrap 0-1; default 0.6).
 - First reads of the live accuracy table (archived predictions vs real points vs FPL's `ep_next`); one gameweek is noise.
 - Clean-sheet gap (−0.08): revisit GW12-15; if still ~25% low, use the joint Dixon-Coles P(0 goals) rather than exp(−λ).
+- First-start minutes adjustment (above) and the full list of other possible enhancements: see `FUTURE_ENHANCEMENTS.md`.
