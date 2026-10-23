@@ -23,6 +23,10 @@ Status key: **[GW10]** re-test around gameweek 10 · **[GW12-15]** later · **[d
    (n = 49) vs model 54%; strict "all earlier games 0 minutes" was 7/8. The opposite pattern (regular who missed last game) is
    over-predicted: 24% actual vs 40% model (n = 50). Net Brier gain only 0.1377 -> 0.1354, so only worth it if it holds with more data.
    Test leave-one-GW-out; add terms to `compute_minutes_model`.
+2a. **Last-season bench record drags new starters [GW10]** — Kostoulas (Brighton, started the last 6 games, 60+ minutes in 5 of 7)
+   had P(60+) 0.60 / 56 expected minutes for GW8 because his last-season record (2 starts in 351 minutes) is used as the prior;
+   without it 0.68 / 63 minutes (2.40 -> 2.67 pts), on his own record alone ~0.83 / 76 minutes (3.07 pts). Test shrinking or dropping
+   the last-season minutes prior once a player has >= 4 starts this season (same family as the first-start adjustment, item 1).
 2. **Re-validate minutes parameters [GW10]** — decay 0.5, k 0.75 (chosen on 4 gameweeks; leave-one-out preferred decay 0.3).
 3. **Use archived chance-of-playing and news** — snapshots now give real availability flags per gameweek (from GW6). Test whether the
    flag should scale minutes differently, and whether "news added" timing matters.
@@ -40,7 +44,7 @@ Status key: **[GW10]** re-test around gameweek 10 · **[GW12-15]** later · **[d
    predictions; check how much of the Wildcard gain is optimism.
 9. **Assists [parked]** — under-predicted in every position (FWD worst: 0.087 vs 0.206, mostly luck: 12 actual vs 4.4 xA). Structural
    inconsistency: last-season prior share is measured against team goals while this season's share is against team xA; FPL xA sums to
-   ~0.61 of xG while actual assists run ~0.9 per goal. Fixing it zeroes the bias without improving accuracy. Revisit with more data.
+   ~0.61 of xG while actual assists run ~0.9 per goal. Fixing it zeroes the bias without improving accuracy. Revisit with more data. (Kostoulas after GW7: 4 assists from 0.12 xA, 3 goals from 1.83 xG — the model deliberately ignores that run.)
 10. **Last-season priors [GW10]** — share prior still helps early (goals MAE 0.607 vs 0.638 without) but fades; minutes prior already
     tiny. Re-test whether it still matters. Penalties from last season are still inside former takers' prior share.
 11. **xG-based recent form** — the form adjustment is points-based, capped at +/-0.5 and zero through GW5 by construction (needs more
@@ -103,3 +107,26 @@ Status key: **[GW10]** re-test around gameweek 10 · **[GW12-15]** later · **[d
 3. Open **Load Live Accuracy** — GW6 and GW7 rows (ours vs FPL `ep_next`).
 4. Re-measure the first-start / absent-last-game minutes patterns with GW7 added.
 5. Re-check top-end calibration (predicted >= 5 and top-15 per gameweek) and single-game-xG outliers.
+
+## 7. Small UI / clarity ideas (from the GW8 review)
+33. **Team Overview column labels** — "GF6/GA6" are ACTUAL goals per game over the last 6 (Brighton 3.17), while the model's Tier 2 uses
+    real xG (Brighton 1.92) and "Odds Att" is the bookmaker view for the next gameweek (Brighton 1.10 at Liverpool, 18th of 20). The
+    mix-up led to a "Brighton looks strong" misread; add tooltips/labels ("goals, not xG") or an xG-for column.
+34. **Player table fixture context** — show the next opponent and the team's blended xG for/against next to the prediction, so a low
+    number can be traced to the fixture without opening the API.
+
+## 8. GW8 decision log (2026-10-23, deadline 17:30 UTC)
+- Your squad entering GW8: Leno, Raya; Calafiori, Guéhi, Hall, Bogle, Schuster; Groß, E.Le Fée, Schade, Saka, Enzo; Haaland, Kostoulas, Thiago.
+  Saka was out (thigh injury, 0%) and Schuster a 75% doubt; 2 free transfers, £0.0m bank; Haaland the model's clear captain (7.0).
+- Model's pick for 2 free transfers: Saka + Schuster -> Mbeumo + Konsa (GW8 XI+captain 58.5 vs 53.5 doing nothing; four gameweeks
+  198.7 vs 182.7). Chelsea route: Saka + Schade -> Mbeumo + Neto (58.4 / 198.6). Palmer-in best: Saka + Guéhi -> Konsa + Palmer (57.8 / 196.3).
+  Rogers + João Pedro together does not fit at £0.0m unless Thiago is sold. **What you actually played is not recorded here — tell me
+  next time so the post-mortem can use it.**
+- The last GW8 snapshot was saved 15:19 UTC (131 minutes before the deadline), after which the app rolled to GW9.
+
+## 9. Checklist for the next review (after GW8)
+1. Compare predicted vs actual for the squad you actually played; re-run "best XI we missed" and the minutes-surprise check.
+2. **Load Live Accuracy**: GW6, GW7 and GW8 rows (ours vs FPL `ep_next`).
+3. Re-measure first-start / absent-last-game minutes patterns and the new-starter prior drag (2a) with GW8 added.
+4. Re-check top-end calibration (predicted >= 5, top-15 per gameweek) and single-game xG outliers.
+5. Before the GW9 deadline (2026-10-31 11:00 UTC): optionally Refresh Odds (uses quota), then **Save snapshot now** after injury news.
