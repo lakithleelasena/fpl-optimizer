@@ -129,4 +129,51 @@ Status key: **[GW10]** re-test around gameweek 10 · **[GW12-15]** later · **[d
 2. **Load Live Accuracy**: GW6, GW7 and GW8 rows (ours vs FPL `ep_next`).
 3. Re-measure first-start / absent-last-game minutes patterns and the new-starter prior drag (2a) with GW8 added.
 4. Re-check top-end calibration (predicted >= 5, top-15 per gameweek) and single-game xG outliers.
-5. Before the GW9 deadline (2026-10-31 11:00 UTC): optionally Refresh Odds (uses quota), then **Save snapshot now** after injury news.
+5. Re-run the section-11 signal study with GW9 (and GW10 for the proper re-test) before deciding on any tweak.
+6. Before the GW9 deadline (2026-10-31 11:00 UTC): optionally Refresh Odds (uses quota), then **Save snapshot now** after injury news.
+
+## 10. GW8 post-mortem (2026-10-31)
+- **Your GW8:** XI Raya; Calafiori, Guéhi, Bogle; Groß, Schade, Enzo, Palmer; Haaland (c), Kostoulas, Thiago; bench Leno, E.Le Fée, Hall, Thomas.
+  Predicted 52.4 (final snapshot; the app showed 55+ when you set the team) vs actual **39** (31 XI + 8 captain). Bench scored 17; the best
+  XI from your own 15 would have scored 50, and the model's own XI (Raya; Calafiori, Thomas, Hall, Bogle, Guéhi; Palmer, E.Le Fée, Enzo; Haaland,
+  Thiago) predicted 57.0 and scored 44.
+- **Why:** the six teams in the XI scored 4 goals vs 9.7 predicted (league-wide 0.95 vs 1.42 goals per team, 8 clean sheets vs ~5 predicted);
+  XI goal points 13.8 predicted vs 4.0; discipline cost ~7 points (Palmer red card — the only one in the league, Groß own goal, two yellows);
+  Calafiori played 22 minutes (hip, now a 75% doubt), Guéhi 45, Thomas 59 (one minute short of the appearance points). Of the XI's 15.9-point
+  error: team scores ~5, participation ~3, player-level ~7.
+- **What we missed:** Gabriel 17 (our #2) and Konsa 14 (our #8) at Arsenal — rated by the model, not owned; N.Jackson 13 (rank 43); four
+  Bournemouth players 10-11 (they beat prediction by 1.76 goals); Dedić (expected 23 mins, played 90) and Tel (12 -> 88) 11 each; Trafford 10.
+  Hindsight best XI 128 vs our 34.2 for those players; GW2-8 best XI ranges 128-150.
+- League-wide GW8 the model was fine in total (1.97 predicted vs 2.07 actual per player) but goals were 42% below prediction while clean-sheet
+  points were 61% above — an attack-heavy squad had the worst of it.
+
+## 11. Outsize-scorer signal study (2026-10-31, GW2-8, 2,773 player-gameweeks, nothing changed)
+Question: can pre-deadline signals (ownership and transfers, price changes, opponent strength, form, minutes) pick the top scorers we miss?
+Pre-deadline market data per gameweek came from FPL's own per-gameweek history (`selected`, `value`, `transfers_in/out`), cross-checked against
+the GW8 snapshot (snapshot counts ~80% of the final at 131 minutes before the deadline). Top-5 scorers per gameweek = 35 events.
+- **Who the top-5 scorers are:** 31% DEF, 40% MID, 26% FWD (forwards are 12% of all rows), 1 GKP; 89% started the previous game (52% overall);
+  54% play for a team with xG >= 1.5 (39% overall); median ownership 5.2% vs 0.6% for all players (49% under 5% — they are NOT the deep
+  differentials); only 20% price-risers. Our model has them at: top-15 20%, top-30 29%, top-60 46%, top-100 71% (base rates 4% / 8% / 15% / 25%),
+  so it already enriches heavily, but 105 of the top-20 scorers per gameweek (75%) were ranked outside our top-30.
+- **Single signals (AUC for "top-20 scorer"):** our prediction 0.76, transfers-in 0.75, ownership 0.74, expected minutes 0.72, BPS (last 3) 0.69,
+  minutes last game 0.69, price 0.66. The market signals mostly proxy quality our prediction already carries.
+- **Do they add anything beyond our prediction?** Leave-one-gameweek-out ridge on actual points: MSE 6.90 -> 6.79-6.86 with market (ownership,
+  transfers-in), fixture, participation or form signals added (-0.6% to -1.6%); top-15 picks' mean points 4.88 -> up to 5.1-5.2 (+0.27-0.35, SE
+  0.14-0.17) for some combinations, but individual signals and some combinations are NEGATIVE (transfers-in only -0.13, ownership only -0.18,
+  crowd + last mins + goals-xG -0.07) — not robust, and the winning subsets were chosen on the same 7 weeks.
+- **Is the model biased anywhere?** Overall +0.03 (calibrated). Largest gaps: players who started last game on a team with xG >= 1.5 are
+  under-predicted by +0.35 (SE 0.15, 5 of 7 weeks); goals-minus-xG over-performers (+1.5) are over-predicted by -0.89 (n = 30, SE 0.46); our
+  top-15 each week over-predicted by -0.48 (SE 0.43); price risers, last-week haulers, ownership and transfers-in groups are within noise.
+- **Rule-style "dart throws" (players outside our top-30):** started last game + transfers-in top quartile + team xG >= 1.5 reaches a top-20
+  finish 13.8% of the time (n = 174, 3.4x the 4.1% base) — useful as a differential shortlist (~25 players a week, ~3-4 hits), not as a way to
+  fill a team. DEF with CS chance >= 40% and low-ownership cheap defenders showed no lift.
+- **Conclusion:** most outsize scoring is luck (finishing, bonus, red cards, clean sheets); no single reliable signal. Candidate tweaks to
+  re-test at GW10-12 with more weeks and the real snapshot market data: (a) lift regulars who started last game on high-xG teams (+0.35),
+  (b) shrink goals-minus-xG over-performers, (c) shrink the top of the ranking (see item 8), (d) add transfers-in/ownership only if a
+  held-out test beats the plain prediction by a wide margin (>= +0.4 points per top-15 pick, positive in >= 6 of 8 weeks).
+
+## 12. Squad-selection observations from GW8
+35. **Lineup choice** — in GW8 the XI you picked scored 39 vs 44 for the XI by predicted points (E.Le Fée, Hall and Thomas were benched for
+    Schade, Kostoulas and Groß). Worth checking whether the app should output the recommended XI and captain explicitly next to the squad.
+36. **Attack-heavy exposure** — GW8 punished an attack-heavy squad in a clean-sheet week; ties to risk-aware optimisation (item 30): consider
+    balancing defender/clean-sheet and attacker exposure instead of maximising expected points alone.
