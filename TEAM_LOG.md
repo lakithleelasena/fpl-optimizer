@@ -21,13 +21,13 @@ Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Pr
 - **Transfer:** Calafiori -> Konsa (1 free transfer used; assumed sale at the listed £5.6m, so ~£1.2m left in the bank — confirm).
 - **XI (3-5-2):** Raya; Konsa, Hall, Bogle; Groß, E.Le Fée, Schade, Enzo, Palmer; Haaland, Thiago.
 - **Bench:** Leno, Kostoulas, Guéhi, Thomas.
-- **Captain / vice:** not stated (assumed Haaland / presumably E.Le Fée) — **confirm**.
+- **Captain:** Haaland (confirmed). Vice not stated.
 - **Predicted (snapshot saved 2026-10-31 00:50 UTC, 610 minutes before the deadline, odds included, not re-saved afterwards):**
   XI 45.6 + captain 6.6 = **52.2**. Raya 4.1, Konsa 4.2, Hall 3.7, Bogle 3.0, Groß 3.0, E.Le Fée 5.2, Schade 2.8, Enzo 4.0, Palmer 4.1,
   Haaland 6.6, Thiago 4.8; bench Leno 3.7, Kostoulas 2.6, Guéhi 2.4, Thomas 1.3 (50% doubt at the time).
-- **Actual (computed from FPL's history, captain unconfirmed):** XI 52 (Raya 5, Konsa 10, Hall 2, Bogle 1, Groß 2, E.Le Fée 8, Schade 3, Enzo 2, Palmer 8, Haaland 2,
-  Thiago 9) + captain extra = **54 if Haaland (c)** (+8 if E.Le Fée, +10 if Konsa); bench 4 (Leno 2, Kostoulas 2, Guéhi 0, Thomas 0). Predicted 52.2. **Confirm the actual
-  total / captain.** No post-mortem done yet.
+- **Actual: 54 points (confirmed)** — XI 52 (Raya 5, Konsa 10, Hall 2, Bogle 1, Groß 2, E.Le Fée 8, Schade 3, Enzo 2, Palmer 8, Haaland 2, Thiago 9) + Haaland captain extra 2;
+  bench 4 (Leno 2, Kostoulas 2, Guéhi 0, Thomas 0). **Predicted 52.2 (snapshot 610 minutes before the deadline) -> within 2 points.** The XI you played matches the one logged.
+  No component post-mortem done yet.
 - Context: model's GW9 recommendation was Calafiori -> Van Hecke (best for GW9) or Konsa/Silva (best over four gameweeks); Palmer's one-match
   red-card ban was served in the EFL Cup at Liverpool on Oct 28, so he was available for Chelsea v Man Utd.
 
@@ -45,8 +45,8 @@ Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Pr
 - **Predicted** 57.5 (XI 51.3 + captain 6.2) vs **actual 43** (XI 41 + Saka captain 2). Hindsight best XI 132. Analysis: `FUTURE_ENHANCEMENTS.md` section 6 / plan doc.
 
 ## After GW10 finishes (Sun 2026-11-08) — analysis checklist
-0. GW9 post-mortem was never done (XI scored ~54 vs 52.2 predicted — close); can be combined with GW10.
-1. Fill in the GW9 and GW10 actuals above (and confirm captain/vice and bank).
+0. GW9 post-mortem not done (54 vs 52.2 predicted — close); optional, can be combined with GW10.
+1. Fill in the GW10 actual above (and confirm the GW10 captain/vice and bank). GW9 is confirmed at 54.
 2. Predicted vs actual for the 15 (components, team scores vs participation vs player-level), best XI we missed, and who the model would have picked.
 3. **Load Live Accuracy** — GW6-GW9 rows (ours vs FPL `ep_next`); GW10 has no pre-deadline snapshot, so score it from the history-based reconstruction.
 4. Re-run the section-11 signal study with GW9 added; re-measure the first-start / new-starter prior-drag minutes patterns.
