@@ -9,7 +9,7 @@ Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Pr
 - **Squad:** Leno, Raya; Konsa, Guéhi, Hall, Bogle, Thomas; Groß, E.Le Fée, Schade, Rogers, Palmer; Haaland, Kostoulas, Thiago.
 - **XI (3-5-2):** Raya; Konsa, Hall, Bogle; Groß, E.Le Fée, Schade, Rogers, Palmer; Haaland, Thiago.
 - **Bench:** Leno, Guéhi, Kostoulas, Thomas.
-- **Captain / vice:** not stated (assumed Haaland / E.Le Fée) — **confirm**.
+- **Captain / vice:** Haaland (c) / Palmer (vc) (confirmed).
 - **Predictions for the post-mortem:** there is NO pre-deadline GW10 snapshot (the first save was ~39 minutes after the deadline, so it was filed under GW11 and
   carries the placeholder-row minutes bug). Copy kept at `archive/2026-27/post_deadline_gw10_saved_20261106T1909Z.json.gz` (FPL availability, `ep_this`, ownership,
   prices are usable as a proxy for the deadline state). Our GW10 predictions must be reconstructed from history up to GW9 (the backtest path; unaffected by the bug).
@@ -46,7 +46,7 @@ Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Pr
 
 ## After GW10 finishes (Sun 2026-11-08) — analysis checklist
 0. GW9 post-mortem not done (54 vs 52.2 predicted — close); optional, can be combined with GW10.
-1. Fill in the GW10 actual above (and confirm the GW10 captain/vice and bank). GW9 is confirmed at 54.
+1. Fill in the GW10 actual above (and confirm the GW10 bank). GW9 is confirmed at 54; GW10 captain/vice confirmed.
 2. Predicted vs actual for the 15 (components, team scores vs participation vs player-level), best XI we missed, and who the model would have picked.
 3. **Load Live Accuracy** — GW6-GW9 rows (ours vs FPL `ep_next`); GW10 has no pre-deadline snapshot, so score it from the history-based reconstruction.
 4. Re-run the section-11 signal study with GW9 added; re-measure the first-start / new-starter prior-drag minutes patterns.
