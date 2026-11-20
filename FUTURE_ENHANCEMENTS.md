@@ -204,3 +204,22 @@ Takeaway: the model is well calibrated; the remaining error is mostly irreducibl
 - **Fix:** `drop_unplayed_history_rows` in `fpl_client.py` (applied in `fetch_all_data`) drops 0-minute rows whose fixture is not finished; rows with minutes > 0 and 0-minute rows of finished fixtures are kept.
   Verified by simulating the post-deadline state: Haaland 51.4 -> 87.2 expected minutes; the filter is a no-op on current data and the player backtest is identical (MAE 1.725, MSE 6.4701 before and after).
 - **Guard:** `snapshot_status` now reports `current_gameweek.pre_deadline_snapshot`; the header bar shows "GWn is in progress — no pre-deadline snapshot was saved" when the gameweek being played has no snapshot saved before its deadline.
+
+## 15. "xFactor" top-scorer signal and repeat-scorer study (2026-11-20, GW1-10; analysis only, nothing changed)
+Goal: a signal (addition or multiplier on predicted points) that finds each gameweek's top-5 scorers.
+- **Who they are (51 top-5 performances, GW2-10):** DEF 18, MID 19, FWD 12, GKP 2; our rank before the game: top-15 18%, top-30 31%, top-100 67% (base 4% / 7% / 24%);
+  median predicted 3.5 (vs 2.1); started last game 84% (vs 51%); team xG >= 1.5 57% (vs 37%); xGI/90 0.26 (vs 0.14); BPS last 3 16.5 (vs 9.0); penalty #1 18% (vs 5%); median ownership ~5%.
+- **40 pre-deadline signals tested** (ownership, transfers, price change, fixture, minutes patterns, xGI/threat/ICT/BPS, haul history, points volatility, penalty takers).
+  Single signals add at most +0.009 AUC beyond our prediction. Combined (leave-one-GW-out): **multiplier, 10 signals** top-15 mean points +0.15 (SE 0.13, 6 of 9 weeks),
+  +2 extra top-5 scorers caught in the top-15 over 9 GWs, but points MSE slightly worse (6.471 vs 6.455); **additive, 10 signals** +0.04 (SE 0.07); 40 signals overfit (worse).
+  The GW8 shortlist rule (started last game + transfers-in top quartile + team xG >= 1.5) caught 0 top-5 scorers out of sample in GW9 (13 flagged) and GW10 (24 flagged).
+- **Size problem:** the median top-5 scorer was predicted 3.5 and scored 13 (needs x3.7 / +9.7); even entering our top-15 needs x1.3 (+1.1); the fitted xFactor only spans x0.7-x1.4.
+- **Form if ever built:** error spread and haul probability scale with the prediction (residual SD 1.5 -> 4.7 points from predicted <1 to 5+; P(10+) 0.8% -> 15.6%), so
+  "upside" is multiplicative and a bounded multiplier (x0.85-x1.2) ranked slightly better; the small genuine MEAN corrections (transfers-in, price rise, started last game) fit better as additions.
+- **Repeat scorers:** a top-5 scorer is top-5 again next week 5.9% of the time (base 1.3%), top-10 7.8% (2.9%), averaging 4.08 points next week (all players 2.02) — but that is
+  already in our prediction: residual +0.29 (SE 0.45); top-6-20 last week +0.27 (SE 0.23); hauled 10+ last week +0.19 (SE 0.28); hot form (6+ per game over the last 3) is
+  slightly OVER-predicted (-0.18). Buying last week's top-5 averaged 4.08 points the next week vs 5.64 for our top-5 predictions (ours better in 8 of 9 weeks).
+  Repeaters (2+ top-5 finishes): Groß 3x, De Cuyper, Haaland, Bogle, Vuskovic, Ayari, Konsa; only 3 back-to-back repeats (Bogle GW3-4, Groß GW4-5, Konsa GW8-9).
+- **Verdict:** do not add xFactor or a "hot hand" boost to predicted points. If experimented with: a separate capped multiplier (x0.85-x1.2) on 2-3 signals (transfers-in,
+  started last game, price rise) used only for captaincy/differential choices, forward-tested on the snapshot archive for 5+ GWs first. **Next idea to test instead:** a rank-gain
+  ("catch-up") score combining predicted points with ownership (differentials), since top-5 scorers' median ownership is ~5%.
