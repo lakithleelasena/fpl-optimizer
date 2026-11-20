@@ -157,6 +157,27 @@ def drop_stale_past_seasons(
     ]
 
 
+def drop_unplayed_history_rows(
+    results: list[tuple[int, list[dict], list[dict]]], fixtures: list[dict],
+) -> list[tuple[int, list[dict], list[dict]]]:
+    """
+    Remove 0-minute history rows whose fixture has not been played yet.
+
+    Right after a gameweek's deadline FPL adds a placeholder row (minutes 0, starts 0) to every
+    player's history for that gameweek's fixture, BEFORE any match is played. The recency-weighted
+    minutes model reads such a row as "didn't play the latest game", which capped every player's
+    start probability at ~0.6 (Haaland 51 expected minutes instead of 87) until the games were
+    played, and it also created bogus "actual 0" rows for the backtest. A 0-minute row is kept only
+    if its fixture is finished (a genuine unused-substitute / not-in-squad game); a row with
+    minutes > 0 is always kept (a match in progress or just finished).
+    """
+    played_fixtures = {f["id"] for f in fixtures if f.get("finished") or f.get("finished_provisional")}
+    return [
+        (pid, [h for h in hist if h.get("minutes", 0) > 0 or h.get("fixture") in played_fixtures], hp)
+        for pid, hist, hp in results
+    ]
+
+
 def _build_player_stats(
     history: list[dict],
     history_past: list[dict] | None = None,
@@ -875,7 +896,7 @@ async def fetch_all_data(snapshot_trigger: str = "auto") -> dict:
         # Fetch histories concurrently
         sem = asyncio.Semaphore(SEMAPHORE_LIMIT)
         tasks = [_fetch_player_history(client, sem, p["id"]) for p in active_players]
-        results = drop_stale_past_seasons(await asyncio.gather(*tasks))
+        results = drop_unplayed_history_rows(drop_stale_past_seasons(await asyncio.gather(*tasks)), fixtures)
 
         team_lookup = {p["id"]: p["team"] for p in active_players}
         pos_lookup = {p["id"]: POSITION_MAP.get(p["element_type"], "MID") for p in active_players}

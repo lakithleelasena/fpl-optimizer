@@ -163,6 +163,10 @@ function renderArchiveBar() {
             (snap.odds_present ? "odds included" : "NO odds this GW — model only") + `</span>`;
         if (stale) html += `<span class="warn">deadline soon — save again</span>`;
     }
+    const cur = st.current_gameweek;
+    if (cur && !cur.pre_deadline_snapshot) {
+        html += `<span class="warn" title="Snapshots saved after a deadline are filed under the next gameweek, so GW${cur.gameweek} has no pre-deadline snapshot and cannot be scored in Live Accuracy.">GW${cur.gameweek} is in progress — no pre-deadline snapshot was saved</span>`;
+    }
     html += `<button id="btn-snapshot" class="btn-snapshot" onclick="saveSnapshotNow()" title="Fresh FPL pull + replace this gameweek's snapshot. Never calls the Odds API.">Save snapshot now</button>`;
     el.innerHTML = html;
 }

@@ -232,4 +232,26 @@ def snapshot_status(data: dict, now: datetime | None = None) -> dict:
         "minutes_to_deadline": round((deadline - now).total_seconds() / 60) if deadline else None,
         "saved": snap is not None,
         "snapshot": _meta(snap, path) if snap else None,
+        "current_gameweek": _current_gameweek_check(data, season, now),
     }
+
+
+def _current_gameweek_check(data: dict, season: str, now: datetime) -> dict | None:
+    """The gameweek now being played (deadline passed, not finished): did we save a snapshot BEFORE
+    its deadline? A save after the deadline is filed under the NEXT gameweek, so a missed deadline
+    leaves a hole — that gameweek then can't be scored in Live Accuracy. Returns None when no
+    gameweek is in progress."""
+    current = next((e for e in data["events"] if e.get("is_current") and not e.get("finished")), None)
+    if current is None:
+        return None
+    gw = current["id"]
+    deadline = _deadline(data["events"], gw)
+    snap = _read(snapshot_path(season, gw))
+    saved_before = False
+    if snap and deadline:
+        try:
+            saved_before = datetime.fromisoformat(snap["saved_at"]) <= deadline
+        except (KeyError, ValueError):
+            saved_before = False
+    return {"gameweek": gw, "deadline_time": deadline.isoformat() if deadline else None,
+            "pre_deadline_snapshot": saved_before}
