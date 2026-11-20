@@ -3,7 +3,7 @@
 Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Predicted" = the final archived snapshot before the deadline
 (`archive/2026-27/gwNN.json.gz`). Update after each gameweek; the post-mortem scripts use this file instead of guessing the XI.
 
-## GW10 (deadline Fri 2026-11-06 18:30 UTC; kickoffs Fri 20:00 UTC - Sun 2026-11-08 16:30 UTC) — result pending
+## GW10 (deadline Fri 2026-11-06 18:30 UTC; kickoffs Fri 20:00 UTC - Sun 2026-11-08 16:30 UTC) — **53 points**
 - **Transfer:** Enzo (Man City) -> Morgan Rogers (Chelsea, £8.2m now) — 1 free transfer. **Bank:** not stated (my £1.2m estimate from GW9 would be £0.1m short
   of the £8.2m price, so the actual bank or sale prices differ) — **confirm**.
 - **Squad:** Leno, Raya; Konsa, Guéhi, Hall, Bogle, Thomas; Groß, E.Le Fée, Schade, Rogers, Palmer; Haaland, Kostoulas, Thiago.
@@ -13,7 +13,11 @@ Each entry: squad, XI, bench, captain, transfers/chips, predicted vs actual. "Pr
 - **Predictions for the post-mortem:** there is NO pre-deadline GW10 snapshot (the first save was ~39 minutes after the deadline, so it was filed under GW11 and
   carries the placeholder-row minutes bug). Copy kept at `archive/2026-27/post_deadline_gw10_saved_20261106T1909Z.json.gz` (FPL availability, `ep_this`, ownership,
   prices are usable as a proxy for the deadline state). Our GW10 predictions must be reconstructed from history up to GW9 (the backtest path; unaffected by the bug).
-- **Actual:** _to fill in after GW10 (finishes Sun 2026-11-08)_.
+- **Actual (computed from FPL's history; assumes no autosubs — all 11 starters played; bank still unconfirmed): 53 points** = XI 51 + Haaland captain extra 2. Raya 6, Konsa 8, Hall 4, Bogle 7,
+  Groß 10, E.Le Fée 11, Schade 1, Rogers 2, Palmer 2, Haaland 2, Thiago -2 (red card, 22 minutes); bench 5 (Leno 3, Guéhi 0, Kostoulas 2, Thomas 0).
+- **Predicted (RECONSTRUCTED from history up to GW9, no odds pulled for GW10, availability = post-deadline FPL flags):** XI 45.4 + captain 5.3 = **50.7** (FPL's `ep_this` sum 41.2 + 5.8 captain).
+  Result 53 vs 50.7 predicted: within 2.3. Team-level: your 8 teams scored 7 goals vs 10.9 predicted but kept all 4 clean sheets in the league (Arsenal, Leeds, Brighton, Sunderland), so clean-sheet points
+  were 14 vs 6.7 predicted; XI assists 0 vs 4.2 predicted; Thiago's red card (only one in the league) and a Schade yellow cost ~4. Hindsight best XI 132; the model's own best XI would have scored 72 (predicted 56.9).
 - **Model changes agreed for GW11 (not made yet):** start with the placeholder-row bug (the history gets a 0-minute row for every player's unplayed fixture right after
   the deadline, which caps start probabilities at ~0.6 until the games are played); then the re-test list in `FUTURE_ENHANCEMENTS.md` (sections 9 and 11).
 
