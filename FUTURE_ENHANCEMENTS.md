@@ -177,3 +177,30 @@ the GW8 snapshot (snapshot counts ~80% of the final at 131 minutes before the de
     Schade, Kostoulas and Groß). Worth checking whether the app should output the recommended XI and captain explicitly next to the squad.
 36. **Attack-heavy exposure** — GW8 punished an attack-heavy squad in a clean-sheet week; ties to risk-aware optimisation (item 30): consider
     balancing defender/clean-sheet and attacker exposure instead of maximising expected points alone.
+
+## 13. GW2-10 re-test of the parked model tweaks (2026-11-20; 3,678 player-gameweeks; read-only, no model change made)
+Baseline (GW2-10): MAE 1.714, MSE 6.455, bias -0.044; P(60+) Brier 0.1365; overall calibration +0.04 points per player-gameweek.
+Each variant below was run through the same backtest (or leave-one-gameweek-out for fitted corrections). **None clears a meaningful bar — MSE moves by 0.3% at most.**
+
+| Item | Result | Verdict |
+|---|---|---|
+| `odds_weight` (item 20) | 50 fixtures with odds (GW5-9), reliable. Best 0.70 (bootstrap median 0.70, p10-p90 0.25-1.0); the curve is flat 0.6-0.8 (deviance 1.185 at 0.6 vs 1.184 at 0.7). Tier 1 (odds) alone 1.190 vs model alone 1.224. | Keep 0.6 |
+| First-start minutes (item 1) | n = 100: model P60 0.51 vs actual 0.58 (+7 points, SE 0.05; strict all-zero-earlier n = 11: 0.53 vs 0.82). Threshold in the doc was >= 10 points at n >= 80, **not met**. Boost +0.07 to P60: MSE -0.07%. | Do not change |
+| Regular who missed last game | n = 141: model P60 0.38 vs actual 0.22 (over-predicted by 16 points, SE 0.04 — now significant). x0.6 haircut: P60 Brier 0.1365 -> 0.1355, MSE -0.07%. Combined with first-start boost: Brier 0.1354, MSE -0.17%. | Real calibration gap but tiny points impact; optional |
+| Last-season bench record drags new starters (item 2a) | Dropping the last-season minutes record once >= 4 games of 60+: MSE -0.07%, better in 4 of 9 GWs. | Do not change |
+| Cap one game's xG in the share (item 7) | Cap 1.0: MSE -0.10%, better in 7 of 9 GWs; cap 0.8: -0.09%, 6 of 9. | Harmless but negligible; optional |
+| Regulars (started last game) on strong-attack teams (xG >= 1.5) | **Gap +0.43 points (SE 0.13), actual > predicted in 8 of 9 GWs** (n = 704) — the one robust miscalibration. A fitted +0.33..+0.56 bump improves held-out MSE only 0.29% (6 of 9 GWs). | Optional small bump |
+| Goals-minus-xG mean reversion (item 8b) | over-performers (+1.5) -0.34 (SE 0.41, 3 of 8 GWs), under-performers +0.37 (SE 0.34); fitted correction MSE +0.03% | Do not change |
+| Top-end shrink (item 8) | predicted >= 6: -1.49 (n = 20, SE 0.84); our top-15 each week only -0.17 (SE 0.37); shrinking predictions above 5 or 6 makes held-out MSE WORSE (+0.06% / +0.25%) | Do not change |
+| DefCon (item 16) | League-wide ratio actual/predicted 1.08 over GW2-9 (DEF 1.10, MID 1.04); the "20% under" seen in GW6/8/10 is offset by GW7/9; held-out scale k 0.85-1.1 | Do not change |
+| Penalty award rate (item 13) | 0.08 / 0.16 / 0.20 vs 0.12: MSE identical to 4 decimals. #1 takers: predicted goals 0.322 per row vs actual xG 0.328 vs actual goals 0.260; points 3.85 predicted vs 3.78 actual | Keep 0.12 |
+
+Takeaway: the model is well calibrated; the remaining error is mostly irreducible (finishing, bonus, cards, clean sheets). The only candidates worth revisiting are the optional ones
+(regular-on-strong-attack bump, missed-last-game haircut, xG cap), each worth <= 0.3% MSE — re-test again near GW15-20 before committing to any.
+
+## 14. Post-deadline bug — FIXED 2026-11-20 (uncommitted at time of writing)
+- **Bug:** right after a deadline FPL adds a 0-minute placeholder row for every player's unplayed fixture; the recency-weighted minutes model read it as "didn't play last game", capping every
+  start probability at ~0.6 (Haaland 51 expected minutes instead of 87) and producing distorted post-deadline snapshots; it would also have added bogus "actual 0" backtest rows.
+- **Fix:** `drop_unplayed_history_rows` in `fpl_client.py` (applied in `fetch_all_data`) drops 0-minute rows whose fixture is not finished; rows with minutes > 0 and 0-minute rows of finished fixtures are kept.
+  Verified by simulating the post-deadline state: Haaland 51.4 -> 87.2 expected minutes; the filter is a no-op on current data and the player backtest is identical (MAE 1.725, MSE 6.4701 before and after).
+- **Guard:** `snapshot_status` now reports `current_gameweek.pre_deadline_snapshot`; the header bar shows "GWn is in progress — no pre-deadline snapshot was saved" when the gameweek being played has no snapshot saved before its deadline.
